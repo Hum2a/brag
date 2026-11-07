@@ -1,5 +1,8 @@
 // Storyboard contract for the default /brag pipeline.
 // The agent writes spec.json. render.mjs refuses to draw a spec that fails validateSpec.
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const TONES = ['default', 'polished', 'yc-parody', 'chaotic', 'deadpan', 'cinematic', 'app-store', 'demo', 'launch'];
 
@@ -203,6 +206,147 @@ function walkStrings(value, visit) {
   else if (value && typeof value === 'object') Object.values(value).forEach((item) => walkStrings(item, visit));
 }
 
+function loadPalette() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const dirs = [];
+  if (process.env.BRAG_ASSETS) dirs.push(process.env.BRAG_ASSETS);
+  dirs.push(resolve(here, '../../brag/assets'));
+  for (const dir of dirs) {
+    const file = join(dir, 'palette.json');
+    if (!existsSync(file)) continue;
+    try {
+      const data = JSON.parse(readFileSync(file, 'utf8'));
+      data.dir = dir;
+      return data;
+    } catch {
+      // A broken palette leaves the tone preset in place.
+    }
+  }
+  return null;
+}
+
+function bedMatches(file, bed, dir) {
+  if (!file || !bed?.file) return false;
+  const norm = (p) => String(p).replaceAll('\\', '/');
+  const want = norm(file);
+  const have = norm(bed.file);
+  if (want === have || want.endsWith(`/${have}`)) return true;
+  const absBed = resolve(dir, bed.file).replaceAll('\\', '/').toLowerCase();
+  const absFile = resolve(file).replaceAll('\\', '/').toLowerCase();
+  return absBed === absFile;
+}
+
+function applyBedClock(spec, authored) {
+  if (spec.music?.off === true) return;
+  const palette = loadPalette();
+  if (!palette) return;
+  const bed = spec.music.file
+    ? Object.values(palette.beds ?? {}).find((item) => bedMatches(spec.music.file, item, palette.dir))
+    : palette.beds?.[spec.tone];
+  if (!bed) return;
+  if (authored.bpm == null && bed.bpm != null) spec.music.bpm = bed.bpm;
+  if (authored.downbeat == null && bed.downbeat != null) spec.music.downbeat = bed.downbeat;
+}
+
+export function beatGrid(spec) {
+  const beat = 60 / (spec.music?.bpm || 120);
+  const duration = spec.duration ?? 0;
+  const count = Math.max(0, Math.floor(duration / beat + 1e-6));
+  const beats = [];
+  for (let i = 0; i <= count; i += 1) beats.push(+(i * beat).toFixed(4));
+  return beats;
+}
+
+function snapToBeat(t, bpm) {
+  const beat = 60 / bpm;
+  return +Math.max(0, Math.round(t / beat) * beat).toFixed(4);
+}
+
+function snapRegions(spec) {
+  const regions = spec.music?.regions;
+  if (!Array.isArray(regions) || !(spec.music.bpm > 0)) return;
+  for (const region of regions) {
+    if (!region || region.lock === false) continue;
+    if (typeof region.at === 'number') region.at = snapToBeat(region.at, spec.music.bpm);
+    if (typeof region.start === 'number') region.start = snapToBeat(region.start, spec.music.bpm);
+  }
+}
+
+export function nearestBeat(beats, t) {
+  let best = beats[0] ?? 0;
+  for (const beat of beats) if (Math.abs(beat - t) < Math.abs(best - t) - 1e-9) best = beat;
+  return best;
+}
+
+function holdsFor(spec, bounds) {
+  for (let i = 0; i < spec.scenes.length; i += 1) {
+    const scene = { ...spec.scenes[i], s: bounds[i], e: bounds[i + 1] };
+    if (!(scene.e > scene.s + 0.05)) return false;
+    for (const layer of scene.layers ?? []) {
+      if (layer.type === 'text' && layerCopy(layer).trim()) {
+        if (textHold(layer, scene) + 1e-3 < requiredHold(layerCopy(layer))) return false;
+      }
+      if (layer.type === 'endcard') {
+        const line = layer.line || spec.endcard?.line || layer.name || spec.endcard?.name || '';
+        const hold = (scene.e - scene.s) - (layer.at ?? 0);
+        if (line && hold + 1e-3 < requiredHold(line)) return false;
+      }
+    }
+  }
+  return true;
+}
+
+function snapCaption(cap, beats) {
+  if (!cap || cap.lock === false || !cap.text) return cap;
+  const need = requiredHold(cap.text);
+  const fits = (s, e) => e - s + 1e-3 >= need && e > s + 0.05;
+  const s = nearestBeat(beats, cap.s);
+  const e = nearestBeat(beats, cap.e);
+  if (fits(s, e)) return { ...cap, s: +s.toFixed(4), e: +e.toFixed(4) };
+  if (fits(s, cap.e)) return { ...cap, s: +s.toFixed(4) };
+  if (fits(cap.s, e)) return { ...cap, e: +e.toFixed(4) };
+  return cap;
+}
+
+function snapLayerAt(layer, scene, beats, spec) {
+  if (layer.lock === false || !['text', 'count', 'endcard'].includes(layer.type)) return;
+  const snappedAt = nearestBeat(beats, scene.s + (layer.at ?? 0)) - scene.s;
+  if (snappedAt < -1e-6 || snappedAt > scene.e - scene.s - 0.05) return;
+  const at = +Math.max(0, snappedAt).toFixed(4);
+  if (layer.type === 'text' && layerCopy(layer).trim()) {
+    if (textHold({ ...layer, at }, scene) + 1e-3 < requiredHold(layerCopy(layer))) return;
+  }
+  if (layer.type === 'endcard') {
+    const line = layer.line || spec.endcard?.line || layer.name || spec.endcard?.name || '';
+    const hold = (scene.e - scene.s) - at;
+    if (line && hold + 1e-3 < requiredHold(line)) return;
+  }
+  layer.at = at;
+}
+
+export function snapBeats(spec) {
+  if (!spec?.scenes?.length || !(spec.music?.bpm > 0) || spec.music.off === true) return spec;
+  const beats = beatGrid(spec);
+  const bounds = [0, ...spec.scenes.slice(0, -1).map((scene) => scene.e), spec.duration];
+  for (let i = 1; i < bounds.length - 1; i += 1) {
+    if (spec.scenes[i - 1].lock === false || spec.scenes[i].lock === false) continue;
+    const snapped = nearestBeat(beats, bounds[i]);
+    if (snapped <= bounds[i - 1] + 0.05 || snapped >= bounds[i + 1] - 0.05) continue;
+    const trial = bounds.slice();
+    trial[i] = snapped;
+    if (!holdsFor(spec, trial)) continue;
+    bounds[i] = snapped;
+  }
+  spec.scenes.forEach((scene, i) => {
+    scene.s = +bounds[i].toFixed(4);
+    scene.e = +bounds[i + 1].toFixed(4);
+    if (scene.lock === false) return;
+    for (const layer of scene.layers ?? []) snapLayerAt(layer, scene, beats, spec);
+  });
+  if (Array.isArray(spec.captions)) spec.captions = spec.captions.map((cap) => snapCaption(cap, beats));
+  return spec;
+}
+
 export function prepareSpec(raw) {
   const spec = structuredClone(raw ?? {});
   spec.cut = spec.cut ?? 'launch';
@@ -219,7 +363,9 @@ export function prepareSpec(raw) {
   }
   if (spec.duration == null && CUTS[spec.cut]) spec.duration = CUTS[spec.cut].seconds;
   const musicPreset = TONE_MUSIC[spec.tone] ?? TONE_MUSIC.default;
+  const authored = raw?.music ?? {};
   spec.music = { ...musicPreset, ...(spec.music ?? {}) };
+  applyBedClock(spec, authored);
   if (spec.duration != null) {
     if (spec.music.drop == null) spec.music.drop = spec.duration < 8 ? 1.5 : spec.duration < 16 ? 3 : 4;
     if (spec.music.end == null) spec.music.end = Math.max(spec.music.drop + 0.4, spec.duration - Math.min(2.5, spec.duration * 0.18));
@@ -234,7 +380,8 @@ export function prepareSpec(raw) {
       if (layer.type === 'lower') placeLower(spec, layer);
     }
   }
-  return spec;
+  snapRegions(spec);
+  return snapBeats(spec);
 }
 
 export function reflow(spec, format) {
@@ -403,6 +550,25 @@ export function validateSpec(spec) {
 
   if (spec.music && spec.music.density && !DENSITIES.includes(spec.music.density)) {
     errors.push(`music.density must be one of ${DENSITIES.join(', ')}`);
+  }
+  if (spec.music?.file && (spec.music.bpm == null || spec.music.downbeat == null)) {
+    errors.push('music.file needs bpm and downbeat');
+  }
+  if (Array.isArray(spec.music?.regions)) {
+    spec.music.regions.forEach((region, i) => {
+      const label = `music region ${i + 1}`;
+      if (!region || typeof region.at !== 'number' || typeof region.start !== 'number' || typeof region.dur !== 'number') {
+        errors.push(`${label} needs at, start, and dur`);
+        return;
+      }
+      if (spec.duration > 0 && region.at + region.dur > spec.duration + 1e-3) {
+        errors.push(`${label} extends past the duration`);
+      }
+    });
+  }
+  if (spec.music?.drop != null && Array.isArray(spec.scenes) && spec.scenes.length) {
+    const near = spec.scenes.some((scene) => Math.abs(scene.s - spec.music.drop) <= 0.2 || Math.abs(scene.e - spec.music.drop) <= 0.2);
+    if (!near) warnings.push('music.drop is not within 0.2s of a scene boundary');
   }
 
   if (!spec.endcard || !spec.endcard.name || !spec.endcard.line) errors.push('endcard needs a name and a line');

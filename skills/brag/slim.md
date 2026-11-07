@@ -75,6 +75,7 @@ Write `brag-plan.md` and `spec.json` in the output directory. The plan is the ar
 - At least one `clip` or `image`, unless you set `textOnly` because there is nothing to show
 - An `endcard` layer in the final scene, with enough hold to read the line
 - `music.off: true` when the user passed `--no-music`. `sfx: false` when they passed `--no-sfx`. Leave bpm, density, and the wipe to the tone. `prepareSpec` fills them in
+- `music.file` plays that track instead of the tone bed. A relative path resolves next to the spec, the same way `takes` does. Set `bpm` and `downbeat` with the file. If the file is a palette bed and you leave them out, `prepareSpec` copies both before it snaps the picture, so the grid matches the file. `music.regions` is a list of `{ at, start, dur }` slices of the file. `at` and `start` land on a beat unless that region sets `lock: false`. Leave regions out to loop from the start. A region has to finish inside the cut
 
 Picture fields, when the cut needs them:
 
@@ -134,7 +135,7 @@ Presets are defaults. A freeform direction ("fake Series A launch from 2016") ma
 
 ## Sound
 
-The bed, the whooshes, and the clicks from the take log are one mix on one beat grid, counted from the first frame. Effects sit under the music. You do not write a soundtrack by hand. `live-sound.mjs` does, from the tone.
+The bed, the whooshes, and the clicks from the take log are one mix on one beat grid, counted from the first frame. Effects sit under the music. You do not write a soundtrack by hand. `live-sound.mjs` does, from the tone, or from `music.file` when a track is chosen. Regions cut that file onto the grid. Without them, the file loops from the top. The finished mix is loudness-normalized to about -14 LUFS and the length stays put.
 
 ## 3. Record, check, render
 
@@ -181,7 +182,7 @@ If `npx hyperframes tts` runs, generate one Kokoro file and stop there. No other
 npx hyperframes tts "<narration>" --voice af_heart --output <output-dir>/assets/voiceover.wav
 ```
 
-`render.mjs` ducks the bed under that file. If Kokoro is not available, render the muted cut and leave the script in the plan.
+`render.mjs` ducks only the bed while that file is speaking, down to about 0.35 across an 80ms fade. Effects stay at full level, and silence in the voice lets the bed back up. Speech across the whole file ducks the whole bed. With no voice file, the render keeps the single music mix. If Kokoro is not available, render the muted cut and leave the script in the plan.
 
 ## 4. Deliver
 

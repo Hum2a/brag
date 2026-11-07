@@ -1,22 +1,205 @@
 // Original soundtrack and effects for a composed video, written as one mix on one beat grid.
 // Clicks, keystrokes and path steps come from the take logs and snap to sixteenth notes.
-// spec.music.density selects the bed: full, sparse, dry, dense, swell, clean.
+// spec.music.file replaces the tone's palette bed. spec.music.regions slices that file onto the timeline.
+// Without regions the file loops from the start. spec.music.density selects the synth bed when no file plays.
 // spec.music.off skips the bed. spec.sfx === false skips effects. The wav is always spec.duration long.
-import { writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const SR = 44100;
+const decoded = new Map();
+
+function resolveAssets() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [];
+  if (process.env.BRAG_ASSETS) candidates.push(process.env.BRAG_ASSETS);
+  candidates.push(resolve(here, '../../brag/assets'));
+  for (const dir of candidates) {
+    if (existsSync(join(dir, 'palette.json'))) return dir;
+  }
+  return null;
+}
+
+function readPalette(dir) {
+  try {
+    const data = JSON.parse(readFileSync(join(dir, 'palette.json'), 'utf8'));
+    data.dir = dir;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function decodeStereo(file, duration, loop) {
+  const key = `${file}|${duration ?? ''}|${loop ? 1 : 0}`;
+  if (decoded.has(key)) return decoded.get(key);
+  if (!existsSync(file)) {
+    decoded.set(key, null);
+    return null;
+  }
+  const args = ['-v', 'error'];
+  if (loop) args.push('-stream_loop', '-1');
+  args.push('-i', file);
+  if (duration != null) args.push('-t', String(duration));
+  args.push('-f', 'f32le', '-ac', '2', '-ar', String(SR), 'pipe:1');
+  let result;
+  try {
+    result = spawnSync('ffmpeg', args, { maxBuffer: 256 * 1024 * 1024 });
+  } catch {
+    decoded.set(key, null);
+    return null;
+  }
+  if (result.error || result.status !== 0 || !result.stdout || result.stdout.length < 8) {
+    decoded.set(key, null);
+    return null;
+  }
+  decoded.set(key, result.stdout);
+  return result.stdout;
+}
+
+function mixStereo(buses, bus, start, pcm, amount, pan, n) {
+  const L = bus === 'mus' ? buses.musL : buses.fxL;
+  const R = bus === 'mus' ? buses.musR : buses.fxR;
+  const s = Math.round(start * SR);
+  const frames = Math.floor(pcm.length / 8);
+  const left = amount * (1 - pan * 0.6);
+  const right = amount * (1 + pan * 0.6);
+  for (let i = 0; i < frames; i += 1) {
+    const idx = s + i;
+    if (idx < 0 || idx >= n) continue;
+    L[idx] += pcm.readFloatLE(i * 8) * left;
+    R[idx] += pcm.readFloatLE(i * 8 + 4) * right;
+  }
+}
+
+function layRegions(buses, pcm, regions, amount, n) {
+  const frames = Math.floor(pcm.length / 8);
+  for (const region of regions) {
+    const dst = Math.round((region.at ?? 0) * SR);
+    const src = Math.round((region.start ?? 0) * SR);
+    const count = Math.round((region.dur ?? 0) * SR);
+    for (let i = 0; i < count; i += 1) {
+      const from = src + i;
+      const to = dst + i;
+      if (from < 0 || from >= frames || to < 0 || to >= n) continue;
+      buses.musL[to] += pcm.readFloatLE(from * 8) * amount;
+      buses.musR[to] += pcm.readFloatLE(from * 8 + 4) * amount;
+    }
+  }
+}
+
+function wavHeader(buf, n) {
+  buf.write('RIFF', 0);
+  buf.writeUInt32LE(36 + n * 4, 4);
+  buf.write('WAVEfmt ', 8);
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(2, 22);
+  buf.writeUInt32LE(SR, 24);
+  buf.writeUInt32LE(SR * 4, 28);
+  buf.writeUInt16LE(4, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write('data', 36);
+  buf.writeUInt32LE(n * 4, 40);
+}
+
+function writeWav(file, left, right, n, gain) {
+  const buf = Buffer.alloc(44 + n * 4);
+  wavHeader(buf, n);
+  for (let i = 0; i < n; i += 1) {
+    buf.writeInt16LE(Math.round(Math.max(-1, Math.min(1, left[i] * gain)) * 32767), 44 + i * 4);
+    buf.writeInt16LE(Math.round(Math.max(-1, Math.min(1, right[i] * gain)) * 32767), 46 + i * 4);
+  }
+  writeFileSync(file, buf);
+}
+
+function loudnormStats(stderr) {
+  const start = stderr.lastIndexOf('{');
+  const end = stderr.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    const stats = JSON.parse(stderr.slice(start, end + 1));
+    for (const key of ['input_i', 'input_tp', 'input_lra', 'input_thresh', 'target_offset']) {
+      if (!Number.isFinite(parseFloat(stats[key]))) return null;
+    }
+    return stats;
+  } catch {
+    return null;
+  }
+}
+
+function loudnormWav(file, n) {
+  const measured = spawnSync('ffmpeg', [
+    '-hide_banner', '-i', file,
+    '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json',
+    '-f', 'null', '-',
+  ], { encoding: 'utf8' });
+  const stats = loudnormStats(`${measured.stderr ?? ''}\n${measured.stdout ?? ''}`);
+  if (!stats) return false;
+  const raw = `${file}.norm.raw`;
+  const num = (value) => String(parseFloat(value));
+  const filter = [
+    'loudnorm=I=-14:TP=-1.5:LRA=11',
+    `measured_I=${num(stats.input_i)}`,
+    `measured_TP=${num(stats.input_tp)}`,
+    `measured_LRA=${num(stats.input_lra)}`,
+    `measured_thresh=${num(stats.input_thresh)}`,
+    `offset=${num(stats.target_offset)}`,
+    'linear=true',
+  ].join(':');
+  const applied = spawnSync('ffmpeg', [
+    '-hide_banner', '-y', '-i', file,
+    '-af', filter,
+    '-f', 's16le', '-ac', '2', '-ar', String(SR),
+    raw,
+  ]);
+  if (applied.error || applied.status !== 0 || !existsSync(raw)) {
+    rmSync(raw, { force: true });
+    return false;
+  }
+  const pcm = readFileSync(raw);
+  rmSync(raw, { force: true });
+  const frames = Math.floor(pcm.length / 4);
+  if (frames < 1) return false;
+  const buf = Buffer.alloc(44 + n * 4);
+  wavHeader(buf, n);
+  pcm.copy(buf, 44, 0, Math.min(frames, n) * 4);
+  writeFileSync(file, buf);
+  return true;
+}
+
 const hz = (m) => 440 * 2 ** ((m - 69) / 12);
 
 export function makeSoundtrack(spec, takes, file) {
   const n = Math.round(SR * spec.duration);
   const music = spec.music ?? {};
-  const beat = 60 / (music.bpm ?? 120);
-  const sixteenth = beat / 4;
   const gain = music.gain ?? 1;
   const sfxGain = Math.min(1, gain);
   const musicOn = music.off !== true && spec.noMusic !== true;
   const sfxOn = spec.sfx !== false && spec.noSfx !== true;
   const density = music.density ?? 'full';
+  const assets = resolveAssets();
+  const palette = assets ? readPalette(assets) : null;
+  const regions = Array.isArray(music.regions) ? music.regions : [];
+  const fileOverride = musicOn && Boolean(music.file);
+  let bedInfo = null;
+  let bedPcm = null;
+  if (fileOverride) {
+    bedPcm = regions.length ? decodeStereo(music.file, null, false) : decodeStereo(music.file, spec.duration, true);
+    bedInfo = { file: music.file, bpm: music.bpm, downbeat: music.downbeat ?? 0 };
+  } else if (musicOn && palette?.beds?.[spec.tone]) {
+    bedInfo = palette.beds[spec.tone];
+    bedPcm = decodeStereo(join(palette.dir, bedInfo.file), spec.duration, true);
+  }
+  const bedFrames = bedPcm ? Math.floor(bedPcm.length / 8) : 0;
+  const useBed = fileOverride
+    ? bedFrames > 0
+    : bedFrames >= n - Math.round(SR / 10);
+  const beat = 60 / (useBed ? (bedInfo.bpm || music.bpm || 120) : (music.bpm ?? 120));
+  const sixteenth = beat / 4;
+  const phase = useBed ? (bedInfo.downbeat ?? 0) : 0;
   const buses = { musL: new Float32Array(n), musR: new Float32Array(n), fxL: new Float32Array(n), fxR: new Float32Array(n), duck: new Float32Array(n) };
   const add = (bus, start, len, fn, amount, pan = 0) => {
     const s = Math.round(start * SR);
@@ -47,7 +230,11 @@ export function makeSoundtrack(spec, takes, file) {
   const beats = Math.ceil(spec.duration / beat);
   const mus = (start, len, fn, amount, pan) => add('mus', start, len, fn, amount * gain, pan);
 
-  if (musicOn && density === 'sparse') {
+  if (useBed && regions.length && fileOverride) {
+    layRegions(buses, bedPcm, regions, gain * 0.75, n);
+  } else if (useBed) {
+    mixStereo(buses, 'mus', 0, bedPcm, gain * 0.75, 0, n);
+  } else if (musicOn && density === 'sparse') {
     for (let t = 0; t < spec.duration - 0.01; t += barLen) chord(t).forEach((m, i) => mus(t, barLen, pad(hz(m), barLen), 0.04, i * 0.6 - 0.6));
     for (let b = 0; b < beats; b += 1) {
       const t = b * beat;
@@ -143,7 +330,7 @@ export function makeSoundtrack(spec, takes, file) {
         add('fx', sc.s - 0.22, 0.46, (t) => noise() * Math.sin(Math.PI * t / 0.46) ** 2, 0.1 * sfxGain, (sc.s % 1) - 0.5);
       }
     }
-    const grid = (t) => Math.round(t / sixteenth) * sixteenth;
+    const grid = (t) => Math.max(0, phase + Math.round((t - phase) / sixteenth) * sixteenth);
     const used = new Set();
     let step = 0;
     for (const sc of spec.scenes ?? []) {
@@ -186,23 +373,21 @@ export function makeSoundtrack(spec, takes, file) {
     peak = Math.max(peak, Math.abs(outL[i]), Math.abs(outR[i]));
   }
   const g = peak > 0.0001 ? 0.89 / peak : 1;
-  const buf = Buffer.alloc(44 + n * 4);
-  buf.write('RIFF', 0);
-  buf.writeUInt32LE(36 + n * 4, 4);
-  buf.write('WAVEfmt ', 8);
-  buf.writeUInt32LE(16, 16);
-  buf.writeUInt16LE(1, 20);
-  buf.writeUInt16LE(2, 22);
-  buf.writeUInt32LE(SR, 24);
-  buf.writeUInt32LE(SR * 4, 28);
-  buf.writeUInt16LE(4, 32);
-  buf.writeUInt16LE(16, 34);
-  buf.write('data', 36);
-  buf.writeUInt32LE(n * 4, 40);
+  const bedL = new Float32Array(n);
+  const bedR = new Float32Array(n);
+  const sfxL = new Float32Array(n);
+  const sfxR = new Float32Array(n);
   for (let i = 0; i < n; i += 1) {
-    buf.writeInt16LE(Math.round(Math.max(-1, Math.min(1, outL[i] * g)) * 32767), 44 + i * 4);
-    buf.writeInt16LE(Math.round(Math.max(-1, Math.min(1, outR[i] * g)) * 32767), 46 + i * 4);
+    const ducked = 1 - 0.42 * buses.duck[i];
+    bedL[i] = Math.tanh(buses.musL[i] * ducked * 1.3);
+    bedR[i] = Math.tanh(buses.musR[i] * ducked * 1.3);
+    sfxL[i] = Math.tanh(buses.fxL[i] * 1.3);
+    sfxR[i] = Math.tanh(buses.fxR[i] * 1.3);
   }
-  writeFileSync(file, buf);
-  return { samples: n, sampleRate: SR };
+  const dir = dirname(file);
+  writeWav(join(dir, 'bed.wav'), bedL, bedR, n, g);
+  writeWav(join(dir, 'sfx.wav'), sfxL, sfxR, n, g);
+  writeWav(file, outL, outR, n, g);
+  if (peak > 0.0001) loudnormWav(file, n);
+  return { samples: n, sampleRate: SR, bed: useBed ? bedInfo.file : null };
 }
