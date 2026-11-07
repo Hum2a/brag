@@ -98,6 +98,16 @@ Build it with tools already on the machine. If something essential is missing, a
 
 Before the full render, look at stills from every scene *and* from mid-transition, and fix overflow, collisions, and low contrast. A plain crossfade between two busy layouts makes a muddy double exposure; stagger it (old content out, then new content in) or dip through the background. Then render `brag.mp4`.
 
+## Live footage (optional, for products with a working UI)
+
+Stills panned across a card read as a slideshow. When the product can be opened and driven, record it instead with the helpers in `scripts/`:
+
+- `live-capture.mjs` records a real browser session as high-resolution frames, with a visible cursor and a log of every click, keystroke and drag. Give each take an `allow` filter so it reaches only what it needs. Never sign in, create an account or read secrets to get footage; use a public demo, or block the backend if the UI works without it.
+- `live-compose.mjs` cuts takes into a video: a camera that follows the cursor or keyframes, kinetic type, shutter transitions, an animated background and tilted cards. Every frame is a pure function of time.
+- `live-sound.mjs` writes an original soundtrack with effects from the take logs, snapped to the beat grid.
+
+Plan the action before recording: learn what the product does on screen, then have the cursor actually do it (draw, type, press play). Prefer the product's own motion (a playback, a tree growing, a total changing) over motion added afterwards. Review a contact sheet of each take before cutting, because pop-ups, off-screen controls and restored state ruin takes silently. Crop or retake anything that would misrepresent the action, and say in the plan what was staged or sped up.
+
 ## 4. Deliver
 
 - **Poster:** pull the strongest *settled* frame (text fully in, not mid-transition) to `brag.jpg`, and bake it in as frame 0 of `brag.mp4` so every platform's thumbnail shows it. Replace frame 0 rather than adding a frame, so the duration and audio sync stay the same.
