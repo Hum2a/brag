@@ -1,6 +1,6 @@
 # Audio reference
 
-All SFX are CC0 (Kenney.nl, public domain). The bundled music is CC BY 4.0 by Sascha Ende (ende.app); see `assets/music/README.md`. Music and SFX should be used by default unless the user passes `--no-music`, `--no-sfx`, the required assets are missing, or the plan explicitly chooses silence as the strongest creative move.
+Kenney's SFX and jingles are CC0. The keyboard pack (unicae_games) and the swishes (artisticdude) are CC0 too. Happy Beats is CC BY 4.0 by Sascha Ende (ende.app). The contrast beds are CC0. Credits and links are in `assets/music/README.md` and the `LICENSE.txt` next to each SFX family. Music and SFX should be used by default unless the user passes `--no-music`, `--no-sfx`, the required assets are missing, or the plan explicitly chooses silence as the strongest creative move.
 
 Bias toward a smooth, professional result: one tasteful music bed plus a small number of well-timed SFX usually feels better than silence.
 
@@ -35,7 +35,7 @@ Hyperframes implementation note: follow the audio-reactive guidance owned by the
 
 All paths below are relative to `<skill-dir>`, this skill's own directory (see "Skill directory" in `SKILL.md`). It differs by install method, so resolve it rather than assuming `~/.claude/skills/brag/`.
 
-SFX live under `<skill-dir>/assets/sfx/{casino,impact,interface,ui}/`, and the individual keypress set under `<skill-dir>/assets/sfx/keyboard/`.
+SFX live under `<skill-dir>/assets/sfx/{casino,impact,interface,ui,whoosh}/`, and the individual keypress set under `<skill-dir>/assets/sfx/keyboard/`.
 
 Music lives at `<skill-dir>/assets/music/`.
 
@@ -88,6 +88,10 @@ Read `sfx-analysis.md` before choosing files — it lists safer picks by use cas
 32 CC0 single keypress WAV files (`keypress-001.wav` through `keypress-032.wav`). Each is a distinct key sound at a slightly different velocity and character. Use these for per-character typing animations — randomize across the set so repeated characters don't sound robotic.
 
 **Source:** [Keyboard Soundpack #1](https://opengameart.org/content/keyboard-soundpack-1-typing-and-single-keystrokes) by unicae_games — CC0
+
+### `whoosh/` — Transition swishes
+
+Eight CC0 swishes, `swish-1.wav` through `swish-8.wav`, from the [Swishes Sound Pack](https://opengameart.org/content/swishes-sound-pack) by artisticdude. The default pipeline plays one on a shutter, dip, or fade. `--full` can use the same files for a transition sweep.
 
 ### `interface/` — UI sounds
 
@@ -217,31 +221,32 @@ Scene 2 — Reveal — 3s
 
 ## Music
 
-### Generated bed (default pipeline)
+### Palette (default pipeline)
 
-The default `/brag` path does not use the files below. `skills/brag-slim/scripts/live-sound.mjs` writes a bed from the tone: full, sparse, dry, dense, swell, or clean, on the same beat grid as the clicks and whooshes. The tone map lives in `skills/brag-slim/scripts/spec.mjs`.
+`skills/brag-slim/scripts/live-sound.mjs` reads `<skill-dir>/assets/palette.json` when this skill is installed next to brag-slim. The palette picks one bed per tone and the click, key, step, and whoosh one-shots. Effects sit under the bed, on that bed's bpm and downbeat. A Happy Beats bed needs the ende.app credit in the share copy. The CC0 beds do not.
 
-On `--full`, Hyperframes still uses a bundled track. Those tracks are one corporate-happy library. They fit `default`, `app-store`, and `launch`. They are a poor fit for `deadpan` and `cinematic`. For those two, generate a bed and drop the wav into the composition instead of forcing a Happy Beats track:
+If `palette.json`, the referenced file, or ffmpeg is missing, the same script synthesizes the bed from the tone (`full`, `sparse`, `dry`, `dense`, `swell`, `clean` in `skills/brag-slim/scripts/spec.mjs`) and synthesizes the one-shots too. Credit is not required for a synthesized bed.
 
-```bash
-node --input-type=module -e "import { makeSoundtrack } from '<slim-script-dir>/live-sound.mjs'; import { TONE_MUSIC } from '<slim-script-dir>/spec.mjs'; makeSoundtrack({ duration: 20, music: { ...TONE_MUSIC.deadpan, drop: 4, end: 17.5 }, scenes: [{ s: 0, e: 20, wipe: 'cut', layers: [] }] }, {}, '<output-dir>/composition/assets/music/bed.wav')"
-```
-
-`<slim-script-dir>` is `skills/brag-slim/scripts/` in this repo, or the installed brag-slim skill's `scripts/` directory. Credit is not required for a generated bed. A bundled track still needs the ende.app credit in `assets/music/README.md`.
+`--full` copies a file from this library into the composition. Use the palette's bed for the tone. Do not substitute a Happy Beats track for `deadpan`, `cinematic`, or `chaotic`.
 
 ### Available tracks
 
-All tracks are "Happy Beats / Business Moves" by ende.app. Upbeat, clean, corporate-adjacent. Use them on `--full` when the tone can live with that feel.
+Happy Beats volumes are CC BY 4.0 by Sascha Ende (ende.app): upbeat, clean, corporate-adjacent. The three CC0 beds are the contrast set. The map is `assets/palette.json`.
 
-| Filename | Duration | Character | Best for |
+| Filename | Duration | Character | Bed for |
 |---|---|---|---|
-| `happy-beats-business-moves-vol-1-by-ende-dot-app.mp3` | 2:44 | Full upbeat track, most energetic | `default`, `app-store`, `launch` |
-| `happy-beats-business-moves-vol-9-by-ende-dot-app.mp3` | 1:54 | Mid-energy, slightly more laid-back | `default`, `yc-parody` |
-| `happy-beats-business-moves-vol-10-by-ende-dot-app.mp3` | 1:00 | Compact loop, punchy | `default`, `chaotic` |
-| `happy-beats-business-moves-vol-11-by-ende-dot-app.mp3` | 1:28 | Warm and business-y | `yc-parody`, `app-store` |
+| `happy-beats-business-moves-vol-1-by-ende-dot-app.mp3` | 2:44 | Full upbeat track, most energetic | `default`, `launch` |
+| `happy-beats-business-moves-vol-9-by-ende-dot-app.mp3` | 1:54 | Mid-energy, slightly more laid-back | `yc-parody` |
+| `happy-beats-business-moves-vol-10-by-ende-dot-app.mp3` | 1:00 | Compact loop, punchy | short cut; not a default bed |
+| `happy-beats-business-moves-vol-11-by-ende-dot-app.mp3` | 1:28 | Warm and business-y | `app-store` |
 | `happy-beats-business-moves-vol-12-by-ende-dot-app.mp3` | 1:58 | Steady and clean | `polished`, `demo` |
+| `insistent-by-yd.ogg` | 2:09 | Quiet, dark, sparse | `deadpan` |
+| `the-final-battle-by-skrjablin.ogg` | 2:26 | Orchestral, dramatic | `cinematic` |
+| `nightmare-heavy-by-centurion-of-war.ogg` | 0:19 | Fast chiptune, loops | `chaotic` |
 
-For `deadpan` and `cinematic` on `--full`, use a generated bed. If you cannot generate one, vol-12 at 0.12–0.18 is the least-wrong bundled file, and the plan should say the bed is a compromise. Skip music only if the plan explicitly chooses silence.
+Kenney's Music Jingles (CC0) live in `assets/music/jingles/`. The hit folder is what the mixer plays when a spec sets `music.hits`.
+
+Skip music only if the plan explicitly chooses silence. A Happy Beats file still needs the credit in `assets/music/README.md`.
 
 ### In a composition
 

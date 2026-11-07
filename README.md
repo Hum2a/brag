@@ -142,9 +142,8 @@ You get a `brag-output/` folder with the plan, `spec.json`, share copy, captions
 
 ## Credits
 
-- Default soundtrack — generated in this repo, one bed per tone
-- Music on `/brag --full` — [ende.app](https://ende.app/en) "Happy Beats / Business Moves" (CC BY 4.0)
-- Sound effects on `/brag --full` — [Kenney](https://kenney.nl/)
+- Music — [ende.app](https://ende.app/en) "Happy Beats / Business Moves" by Sascha Ende (CC BY 4.0). CC0 contrast beds: Insistent by yd, The Final Battle by skrjablin, Nightmare by Centurion_of_war (OpenGameArt). The mixer synthesizes a bed only when those files are missing.
+- Sound effects — [Kenney](https://kenney.nl/) (CC0). Keyboard pack by unicae_games (CC0). Swishes by artisticdude (CC0). Jingles by Kenney (CC0).
 - `/brag --full` — [Hyperframes](https://hyperframes.heygen.com/)
 - Fake demo sites — built with [Impeccable](https://impeccable.style/)
 

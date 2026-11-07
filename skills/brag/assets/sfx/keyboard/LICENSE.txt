@@ -1,0 +1,7 @@
+Keyboard Soundpack #1 by unicae_games.
+
+Source: https://opengameart.org/content/keyboard-soundpack-1-typing-and-single-keystrokes
+License: CC0 1.0 Universal — https://creativecommons.org/publicdomain/zero/1.0/
+
+The pack readme says the sounds are free to use. The OpenGameArt page lists CC0 as the only license.
+Credit is not required. The files in this folder are the 32 single keypresses from that pack.

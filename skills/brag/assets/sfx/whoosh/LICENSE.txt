@@ -1,0 +1,6 @@
+Swishes Sound Pack by artisticdude.
+
+Source: https://opengameart.org/content/swishes-sound-pack
+License: CC0 1.0 Universal — https://creativecommons.org/publicdomain/zero/1.0/
+
+Thirteen swish sound effects were released for the FOSS game Summoning Wars. This folder vendors swish-1 through swish-8. Credit is not required.

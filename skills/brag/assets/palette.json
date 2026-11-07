@@ -1,0 +1,135 @@
+{
+  "clicks": [
+    "sfx/interface/click_003.ogg",
+    "sfx/interface/click_002.ogg",
+    "sfx/interface/click_005.ogg",
+    "sfx/interface/click_001.ogg",
+    "sfx/ui/click2.ogg"
+  ],
+  "keys": [
+    "sfx/keyboard/keypress-001.wav",
+    "sfx/keyboard/keypress-002.wav",
+    "sfx/keyboard/keypress-003.wav",
+    "sfx/keyboard/keypress-004.wav",
+    "sfx/keyboard/keypress-005.wav",
+    "sfx/keyboard/keypress-006.wav",
+    "sfx/keyboard/keypress-007.wav",
+    "sfx/keyboard/keypress-008.wav",
+    "sfx/keyboard/keypress-009.wav",
+    "sfx/keyboard/keypress-010.wav",
+    "sfx/keyboard/keypress-011.wav",
+    "sfx/keyboard/keypress-012.wav",
+    "sfx/keyboard/keypress-013.wav",
+    "sfx/keyboard/keypress-014.wav",
+    "sfx/keyboard/keypress-015.wav",
+    "sfx/keyboard/keypress-016.wav",
+    "sfx/keyboard/keypress-017.wav",
+    "sfx/keyboard/keypress-018.wav",
+    "sfx/keyboard/keypress-019.wav",
+    "sfx/keyboard/keypress-020.wav",
+    "sfx/keyboard/keypress-021.wav",
+    "sfx/keyboard/keypress-022.wav",
+    "sfx/keyboard/keypress-023.wav",
+    "sfx/keyboard/keypress-024.wav",
+    "sfx/keyboard/keypress-025.wav",
+    "sfx/keyboard/keypress-026.wav",
+    "sfx/keyboard/keypress-027.wav",
+    "sfx/keyboard/keypress-028.wav",
+    "sfx/keyboard/keypress-029.wav",
+    "sfx/keyboard/keypress-030.wav",
+    "sfx/keyboard/keypress-031.wav",
+    "sfx/keyboard/keypress-032.wav"
+  ],
+  "steps": [
+    "sfx/impact/impactSoft_medium_000.ogg",
+    "sfx/impact/impactSoft_medium_001.ogg",
+    "sfx/impact/impactSoft_medium_002.ogg",
+    "sfx/impact/impactSoft_medium_003.ogg",
+    "sfx/impact/impactSoft_medium_004.ogg"
+  ],
+  "whooshes": [
+    "sfx/whoosh/swish-1.wav",
+    "sfx/whoosh/swish-2.wav",
+    "sfx/whoosh/swish-3.wav",
+    "sfx/whoosh/swish-4.wav",
+    "sfx/whoosh/swish-5.wav",
+    "sfx/whoosh/swish-6.wav",
+    "sfx/whoosh/swish-7.wav",
+    "sfx/whoosh/swish-8.wav"
+  ],
+  "hits": [
+    "music/jingles/hit/jingles_HIT00.ogg",
+    "music/jingles/hit/jingles_HIT01.ogg",
+    "music/jingles/hit/jingles_HIT02.ogg",
+    "music/jingles/hit/jingles_HIT03.ogg",
+    "music/jingles/hit/jingles_HIT04.ogg",
+    "music/jingles/hit/jingles_HIT05.ogg",
+    "music/jingles/hit/jingles_HIT06.ogg",
+    "music/jingles/hit/jingles_HIT07.ogg"
+  ],
+  "beds": {
+    "default": {
+      "file": "music/happy-beats-business-moves-vol-1-by-ende-dot-app.mp3",
+      "bpm": 120.19,
+      "downbeat": 0.023,
+      "license": "CC-BY-4.0",
+      "credit": "Music: Sascha Ende, ende.app (CC BY 4.0)"
+    },
+    "launch": {
+      "file": "music/happy-beats-business-moves-vol-1-by-ende-dot-app.mp3",
+      "bpm": 120.19,
+      "downbeat": 0.023,
+      "license": "CC-BY-4.0",
+      "credit": "Music: Sascha Ende, ende.app (CC BY 4.0)"
+    },
+    "app-store": {
+      "file": "music/happy-beats-business-moves-vol-11-by-ende-dot-app.mp3",
+      "bpm": 114.84,
+      "downbeat": 0.035,
+      "license": "CC-BY-4.0",
+      "credit": "Music: Sascha Ende, ende.app (CC BY 4.0)"
+    },
+    "polished": {
+      "file": "music/happy-beats-business-moves-vol-12-by-ende-dot-app.mp3",
+      "bpm": 109.96,
+      "downbeat": 0.012,
+      "license": "CC-BY-4.0",
+      "credit": "Music: Sascha Ende, ende.app (CC BY 4.0)"
+    },
+    "yc-parody": {
+      "file": "music/happy-beats-business-moves-vol-9-by-ende-dot-app.mp3",
+      "bpm": 114.84,
+      "downbeat": 0.023,
+      "license": "CC-BY-4.0",
+      "credit": "Music: Sascha Ende, ende.app (CC BY 4.0)"
+    },
+    "demo": {
+      "file": "music/happy-beats-business-moves-vol-12-by-ende-dot-app.mp3",
+      "bpm": 109.96,
+      "downbeat": 0.012,
+      "license": "CC-BY-4.0",
+      "credit": "Music: Sascha Ende, ende.app (CC BY 4.0)"
+    },
+    "chaotic": {
+      "file": "music/nightmare-heavy-by-centurion-of-war.ogg",
+      "bpm": 192,
+      "downbeat": 0,
+      "license": "CC0-1.0",
+      "credit": "Nightmare (heavy) by Centurion_of_war (CC0)"
+    },
+    "deadpan": {
+      "file": "music/insistent-by-yd.ogg",
+      "bpm": 148,
+      "downbeat": 0.302,
+      "license": "CC0-1.0",
+      "credit": "Insistent by yd (CC0)"
+    },
+    "cinematic": {
+      "file": "music/the-final-battle-by-skrjablin.ogg",
+      "bpm": 157,
+      "downbeat": 0.093,
+      "license": "CC0-1.0",
+      "credit": "The Final Battle by skrjablin (CC0)"
+    }
+  }
+}

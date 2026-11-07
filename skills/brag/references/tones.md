@@ -296,7 +296,7 @@ horse.example
 
 ## Pipeline motion and music
 
-The default `/brag` path does not score the trailer with the bundled Happy Beats tracks. `prepareSpec` in `skills/brag-slim/scripts/spec.mjs` fills the wipe, the type entrance, the background, and the bed from the tone. `live-sound.mjs` plays that bed on one beat grid. `--full` still uses the bundled tracks; for `deadpan` and `cinematic`, prefer a generated bed over those tracks. See `references/audio.md`.
+`prepareSpec` in `skills/brag-slim/scripts/spec.mjs` fills the wipe, the type entrance, and the background from the tone. `live-sound.mjs` plays the bed in `assets/palette.json` on that bed's beat grid, and synthesizes one only when the palette or ffmpeg is missing. The bed column below is that synthesized fallback. `--full` uses the same palette: Happy Beats for the corporate tones, and the CC0 beds for `deadpan`, `cinematic`, and `chaotic`. See `references/audio.md`.
 
 | Tone | Wipe | Type | Background | Bed |
 |---|---|---|---|---|

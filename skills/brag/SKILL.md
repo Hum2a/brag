@@ -136,7 +136,7 @@ Validate, preview, render to `<output-dir>/brag.mp4`, pick the best poster frame
 
 ## Tone system
 
-Nine tone presets ship with `/brag`. Each changes scripting energy, pacing, typography personality, and transition style. Presets are defaults, not limits. The pipeline maps each one onto a wipe, a type entrance, and a generated bed. `--full` uses the same names.
+Nine tone presets ship with `/brag`. Each changes scripting energy, pacing, typography personality, and transition style. Presets are defaults, not limits. The pipeline maps each one onto a wipe, a type entrance, and a music bed from the vendored palette, synthesizing a bed only when those assets are missing. `--full` uses the same names.
 
 Full definitions: [references/tones.md](references/tones.md)
 

@@ -257,8 +257,10 @@ assert(platformPreset('landscape').raise === 0, 'an unknown platform raise is 0'
 const beatSpec = prepareSpec(goodSpec());
 const hook = trimPoint(beatSpec, 6);
 const beat = 60 / beatSpec.music.bpm;
+const origin = Number(beatSpec.music.downbeat);
+const phase = (hook - (Number.isFinite(origin) ? origin : 0)) / beat;
 assert(hook > 0 && hook <= 6 && hook <= beatSpec.duration, `hook trim ${hook}s should sit at or under 6s`);
-assert(Math.abs(hook / beat - Math.round(hook / beat)) < 0.02, `hook trim ${hook}s should sit on a beat`);
+assert(Math.abs(phase - Math.round(phase)) < 0.02, `hook trim ${hook}s should sit on a beat`);
 
 const looped = prepareSpec(goodSpec());
 looped.loopHold = true;
