@@ -78,6 +78,14 @@ Write `brag-plan.md` and `spec.json` in the output directory. The plan is the ar
 
 Text lines are `[text, accent?]` or a string. `accent: true` uses `pal.accent`.
 
+A `clip` or `image` can finish the footage. The finish stays on that frame, so type and captions keep the palette color.
+
+- `grade`: `{ contrast, saturate, temperature }`. `contrast` and `saturate` are CSS filter amounts around 1, applied to the picture. `temperature` runs from -1 (cool) to 1 (warm) and is a low-opacity multiply inside the frame.
+- `grain: true` adds faint noise on that footage, at about 0.08 opacity.
+- `vignette: true` adds a radial darkening on that footage.
+- `blend`: `normal` (the default), `multiply`, or `screen`, set with mix-blend-mode on the footage frame.
+- `shadow: true` on a clip whose box is not `full` draws a contact ellipse under the frame. A full-bleed clip ignores `shadow`.
+
 ## Creative laws
 
 - **Short.** The cut is the length. Launch sits around 18–22 seconds. Nothing runs past 35.

@@ -9,6 +9,7 @@ import {
   DENSITIES,
   TONE_MUSIC,
   TONES,
+  gradeFilter,
   prepareSpec,
   reflow,
   toSrt,
@@ -92,6 +93,29 @@ const vertical = validateSpec(prepareSpec(reflow(prepareSpec(goodSpec()), 'verti
 assert(vertical.ok, `vertical reflow failed: ${vertical.errors.join('; ')}`);
 const square = validateSpec(prepareSpec(reflow(prepareSpec(goodSpec()), 'square')));
 assert(square.ok, `square reflow failed: ${square.errors.join('; ')}`);
+
+assert(gradeFilter({ contrast: 1.1 }).includes('contrast(1.1)'), 'gradeFilter({ contrast: 1.1 }) should contain contrast(1.1)');
+
+const graded = prepareSpec(goodSpec());
+graded.scenes[1].layers[0].blend = 'screen';
+graded.scenes[1].layers[0].grade = { contrast: 1.1, saturate: 0.9, temperature: -1 };
+graded.scenes[1].layers[0].shadow = true;
+graded.scenes[0].layers[1].grain = true;
+graded.scenes[0].layers[1].vignette = true;
+graded.scenes[0].layers[1].blend = 'multiply';
+graded.scenes[0].layers[1].grade = { temperature: 1 };
+const gradedResult = validateSpec(graded);
+assert(gradedResult.ok, `graded footage should pass: ${gradedResult.errors.join('; ')}`);
+
+const badBlend = prepareSpec(goodSpec());
+badBlend.scenes[1].layers[0].blend = 'overlay';
+const badBlendResult = validateSpec(badBlend);
+assert(!badBlendResult.ok && badBlendResult.errors.some((error) => error.includes('blend')), 'an unknown blend should fail validation');
+
+const hot = prepareSpec(goodSpec());
+hot.scenes[0].layers[1].grade = { temperature: 1.2 };
+const hotResult = validateSpec(hot);
+assert(!hotResult.ok && hotResult.errors.some((error) => error.includes('temperature')), 'a temperature outside -1 to 1 should fail');
 
 assert(toSrt(valid ? prepareSpec(goodSpec()).captions : []).includes('Horse Tinder.'), 'srt should include caption text');
 
