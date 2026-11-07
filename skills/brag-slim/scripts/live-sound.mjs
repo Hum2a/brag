@@ -2,6 +2,8 @@
 // Clicks, keystrokes and path steps come from the take logs and snap to sixteenth notes.
 // spec.music.density selects the bed: full, sparse, dry, dense, swell, clean.
 // spec.music.off skips the bed. spec.sfx === false skips effects. The wav is always spec.duration long.
+// scene.audioLead moves that scene's take-log effects and wipe whoosh earlier.
+// scene.audioLag moves them later. The bed stays where it is.
 import { writeFileSync } from 'node:fs';
 
 const SR = 44100;
@@ -137,25 +139,32 @@ export function makeSoundtrack(spec, takes, file) {
     }
   }
 
+  const clampStart = (t) => Math.min(spec.duration, Math.max(0, t));
+  const sceneShift = (sc) => (Number(sc?.audioLag) || 0) - (Number(sc?.audioLead) || 0);
+
   if (sfxOn) {
     for (const sc of spec.scenes ?? []) {
       if (sc.s > 0 && (sc.wipe === 'shutter' || sc.wipe === 'dip' || sc.wipe === 'fade')) {
-        add('fx', sc.s - 0.22, 0.46, (t) => noise() * Math.sin(Math.PI * t / 0.46) ** 2, 0.1 * sfxGain, (sc.s % 1) - 0.5);
+        const start = clampStart(sc.s - 0.22 + sceneShift(sc));
+        add('fx', start, 0.46, (t) => noise() * Math.sin(Math.PI * t / 0.46) ** 2, 0.1 * sfxGain, (sc.s % 1) - 0.5);
       }
     }
     const grid = (t) => Math.round(t / sixteenth) * sixteenth;
     const used = new Set();
     let step = 0;
     for (const sc of spec.scenes ?? []) {
+      const shift = sceneShift(sc);
       for (const l of sc.layers ?? []) {
         if (l.type !== 'clip' || l.sound === false) continue;
         const events = takes?.[l.take]?.events;
         if (!events) continue;
         for (const e of events) {
           if (!['click', 'key', 'step'].includes(e.type)) continue;
-          const t = sc.s + (l.at ?? 0) + (e.t - (l.from ?? 0)) / (l.speed ?? 1);
-          if (t < sc.s + 0.05 || t >= sc.e - 0.05) continue;
-          const g = grid(t);
+          const pictureT = sc.s + (l.at ?? 0) + (e.t - (l.from ?? 0)) / (l.speed ?? 1);
+          if (pictureT < sc.s + 0.05 || pictureT >= sc.e - 0.05) continue;
+          const t = clampStart(pictureT + shift);
+          const g = clampStart(grid(t));
+          if (g >= spec.duration) continue;
           const key = `${e.type}${g.toFixed(3)}`;
           if (used.has(key)) continue;
           used.add(key);
