@@ -15,11 +15,14 @@ import {
   clipTime,
   gradeFilter,
   holdsFor,
+  loopHoldPad,
+  platformPreset,
   prepareSpec,
   reflow,
   sceneKey,
   textHold,
   toSrt,
+  trimPoint,
   validateSpec,
 } from '../skills/brag-slim/scripts/spec.mjs';
 
@@ -242,6 +245,34 @@ right.scenes = [
 ];
 assert(sceneKey(left, left.scenes[0]) === sceneKey(right, right.scenes[1]), 'a shared scene should keep the same sceneKey when the scene order swaps');
 assert(sceneKey(left, left.scenes[0]) !== sceneKey(right, right.scenes[0]), 'a different scene should not reuse that sceneKey');
+
+assert(platformPreset('reels').raise === 220, 'a reels preset raises captions by 220');
+assert(platformPreset('tiktok').raise === 220, 'a tiktok preset raises captions by 220');
+assert(platformPreset('reels').width === 1080 && platformPreset('reels').height === 1920, 'reels is 1080x1920');
+assert(platformPreset('tiktok').width === 1080 && platformPreset('tiktok').height === 1920, 'tiktok is 1080x1920');
+assert(platformPreset().raise === 0, 'the default caption raise is 0');
+assert(platformPreset('landscape').raise === 0, 'an unknown platform raise is 0');
+
+const beatSpec = prepareSpec(goodSpec());
+const hook = trimPoint(beatSpec, 6);
+const beat = 60 / beatSpec.music.bpm;
+assert(hook > 0 && hook <= 6 && hook <= beatSpec.duration, `hook trim ${hook}s should sit at or under 6s`);
+assert(Math.abs(hook / beat - Math.round(hook / beat)) < 0.02, `hook trim ${hook}s should sit on a beat`);
+
+const looped = prepareSpec(goodSpec());
+looped.loopHold = true;
+const loopedResult = validateSpec(looped);
+assert(loopedResult.ok && looped.duration === 15, `loopHold should still validate duration: ${loopedResult.errors.join('; ')}`);
+assert(loopHoldPad(looped) === 0.5, 'loopHold pads 15 frames, 0.5s at 30fps');
+const capped = prepareSpec(goodSpec());
+capped.loopHold = true;
+capped.duration = 35.05;
+assert(loopHoldPad(capped) === 0, 'loopHold skips a pad that would pass 35.5s');
+
+const unburned = prepareSpec(goodSpec());
+unburned.burnCaptions = false;
+const unburnedResult = validateSpec(unburned);
+assert(unburnedResult.ok && toSrt(unburned.captions).includes('Horse Tinder.'), 'burnCaptions false still keeps the srt');
 
 assert(JSON.stringify(Object.keys(TONE_MUSIC).sort()) === JSON.stringify([...TONES].sort()), 'every tone needs a music preset');
 for (const preset of Object.values(TONE_MUSIC)) assert(DENSITIES.includes(preset.density), `unknown density ${preset.density}`);

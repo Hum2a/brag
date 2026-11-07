@@ -15,6 +15,10 @@ Usage: `/brag-slim [input] [options]`. Options (flags or plain language):
 | `--format landscape\|vertical\|square` | landscape (1920×1080; vertical 1080×1920; square 1080×1080), 30fps |
 | `--cut hook\|social\|launch\|trailer` | `launch` (about 20s). `hook` is 6s, `social` is 15s, `trailer` is 35s |
 | `--pack` | off. Also renders the two formats you did not ask for |
+| `--platform reels\|tiktok` | off. When the master is vertical, also writes `brag-reels.mp4` or `brag-tiktok.mp4` at 1080×1920, captions raised 220px, loudness -14 LUFS |
+| `--gif` | off. Silent `brag-hook.gif` of the opening, cut on a beat at or under 6s, 15fps, 720px wide |
+| `--webm` | off. Silent VP9 `brag-hook.webm` of that same span |
+| `--thumbs` | off. `brag-thumb.jpg` from the poster and `brag-thumb-end.jpg` from a settled frame in the last scene |
 | `--no-music` | music on |
 | `--no-sfx` | effects on |
 | `--voice` | narration off |
@@ -69,6 +73,10 @@ Write `brag-plan.md` and `spec.json` in the output directory. The plan is the ar
 - `cut`, `format`, `tone`, `duration`, `fps` (30), `poster` (a settled time, not a cut)
 - `pal`: `bg`, `fg`, `accent`, `font`, and `glow` when the tone uses blobs. `fg` on `bg` has to clear WCAG AA (4.5:1)
 - `captions`: `{ s, e, text }` for the muted read. A short label needs about 0.8s. A sentence needs about 0.3s per word. `style` is `plain` (default) or `pill`. `raise` adds pixels to the bottom inset. Wrap a word in asterisks (`*word*`) to draw it in `pal.accent`. The srt drops the asterisks and stays one cue per line. Kinetic headlines stay as text layers; a claim is one or the other
+- `burnCaptions: false` still writes `brag.srt` and keeps the on-screen caption at opacity 0. Omit it to burn the captions
+- `title`, stored as the mp4 title. `endcard.url` is stored as the file comment
+- `thumbs`: an optional `[posterTime, endTime]` pair, in seconds, that overrides the two thumbnail frames
+- `loopHold: true` repeats the last frame for 15 frames (0.5s) and pads the audio by the same amount. The file is that much longer than `duration`. Skipped when the padded length would pass 35.5s. Validation still checks `duration`
 - `endcard`: `name`, `line`, and `url` when the project has a URL or handle. A layer may set `mark` to a short string. The first 0.6s after `at` shows that mark large, then the name, the line, and the url. The line's readable hold starts after the sting
 - `scenes`: contiguous from 0 to `duration`. Each layer is a `clip`, `image`, `text`, `count`, `bars`, `rect`, `lower`, `sticker`, or `endcard`
 - `overlays`: optional `text` or `image` layers with their own `s` and `e`. They draw on the stage, not inside a scene, so a headline can stay up across a cut. The hold still has to be long enough to read, and the box stays in the safe area. An overlay does not replace the end card
@@ -80,6 +88,7 @@ Write `brag-plan.md` and `spec.json` in the output directory. The plan is the ar
 - An `endcard` layer in the final scene, with enough hold to read the line
 - `music.off: true` when the user passed `--no-music`. `sfx: false` when they passed `--no-sfx`. Leave bpm, density, and the wipe to the tone. `prepareSpec` fills them in
 - `music.file` plays that track instead of the tone bed. A relative path resolves next to the spec, the same way `takes` does. Set `bpm` and `downbeat` with the file. If the file is a palette bed and you leave them out, `prepareSpec` copies both before it snaps the picture, so the grid matches the file. `music.regions` is a list of `{ at, start, dur }` slices of the file. `at` and `start` land on a beat unless that region sets `lock: false`. Leave regions out to loop from the start. A region has to finish inside the cut
+- When the palette bed has a credit string, `prepareSpec` copies it to `music.credit`. The end card draws that one line, small, for the last two seconds of the last scene. A synth bed with no credit draws nothing
 
 Picture fields, when the cut needs them:
 
@@ -139,7 +148,7 @@ Presets are defaults. A freeform direction ("fake Series A launch from 2016") ma
 
 ## Sound
 
-The bed, the whooshes, and the clicks from the take log are one mix on one beat grid, counted from the first frame. Effects sit under the music. You do not write a soundtrack by hand. `live-sound.mjs` does, from the tone, or from `music.file` when a track is chosen. Regions cut that file onto the grid. Without them, the file loops from the top. The finished mix is loudness-normalized to about -14 LUFS and the length stays put. `audioLead` and `audioLag` on a scene move only that scene's take-log effects and wipe whoosh. The bed stays on the grid.
+The bed, the whooshes, and the clicks from the take log are one mix on one beat grid, counted from the first frame. Effects sit under the music. You do not write a soundtrack by hand. `live-sound.mjs` does, from the tone, or from `music.file` when a track is chosen. Regions cut that file onto the grid. Without them, the file loops from the top. The finished mix is loudness-normalized to about -14 LUFS and the length stays put. `audioLead` and `audioLag` on a scene move only that scene's take-log effects and wipe whoosh. The bed stays on the grid. A palette bed with a credit is named on the end card. A synth bed with no credit is not.
 
 ## 3. Record, check, render
 
@@ -192,6 +201,8 @@ Then check stills, and only then render:
 node <script-dir>/render.mjs <output-dir>/spec.json --stills
 node <script-dir>/render.mjs <output-dir>/spec.json
 node <script-dir>/render.mjs <output-dir>/spec.json --pack
+node <script-dir>/render.mjs <output-dir>/spec.json --gif --webm --thumbs
+node <script-dir>/render.mjs <output-dir>/spec.json --platform reels
 ```
 
 `--stills` writes `work/contact.jpg`: a settled frame of every scene, the midpoint of every cut, and any marker time that falls inside the cut. Look at it. Fix overflow, collisions, type outside the safe area, and a muddy cut. A plain crossfade between two busy layouts makes a double exposure; the tone's wipe already avoids that. Dip and fade go through the background. Do not render the full trailer until the contact sheet is clean.
@@ -199,6 +210,10 @@ node <script-dir>/render.mjs <output-dir>/spec.json --pack
 Each scene's frames are kept in `work/scenes/<format>/<hash>/`. The hash is the first 16 hex characters of that scene's key: its layers, the captions and overlays whose windows overlap it, the palette, the motion, and the stage size. A second spec that reuses that scene, even in a different order, reuses those frames. A rearranged cut is another spec file.
 
 `--pack` reflows the same spec into the other two aspect ratios. It is opt-in because each pass screenshots every frame.
+
+`--gif` writes `brag-hook.gif` from the first beat at or under 6s: 15fps, 720px wide, no audio, with palettegen. `--webm` writes a silent VP9 `brag-hook.webm` of that same span. `--thumbs` writes `brag-thumb.jpg` from `poster` and `brag-thumb-end.jpg` from a settled frame in the last scene. A `thumbs` pair in the spec overrides those times. The stills are frames from the render. ffmpeg does not draw text on them.
+
+`--platform reels` or `--platform tiktok` runs only when the master format is vertical. It writes a second 1080×1920 file, `brag-reels.mp4` or `brag-tiktok.mp4`, with the burned line raised 220px so it clears the platform buttons, then loudness-normalizes that encode to -14 LUFS without changing the picture length. A landscape or square master skips the pass. The caption raise is 0 on every other encode.
 
 ### Voice
 
@@ -216,10 +231,13 @@ npx hyperframes tts "<narration>" --voice af_heart --output <output-dir>/assets/
 
 The render writes:
 
-- `brag.mp4`, with the poster baked as frame 0 so idle thumbnails show it
+- `brag.mp4`, with the poster baked as frame 0 so idle thumbnails show it. Its title is `spec.title` and its comment is `endcard.url`. `markers`, when present, are chapters
 - `brag.jpg`, that same settled frame
-- `brag.srt`
+- `brag.srt`, including when `burnCaptions` is false
 - `brag-vertical.mp4` and `brag-square.mp4` when `--pack` was set
+- `brag-reels.mp4` or `brag-tiktok.mp4` when `--platform` was set on a vertical master
+- `brag-hook.gif` when `--gif` was set, and `brag-hook.webm` when `--webm` was set
+- `brag-thumb.jpg` and `brag-thumb-end.jpg` when `--thumbs` was set
 
 You write:
 
