@@ -5,12 +5,13 @@
 // spec comes from spec.mjs (prepareSpec): width, height, margin, format, tone, captions,
 // endcard, scenes. Clip layers play takes from live-capture. Image layers use local files.
 // Tones pick the wipe (shutter, dip, cut, fade, push, iris), type entrance, and background.
+// Grade, grain, vignette, blend, and shadow stay on the footage node.
 import { pathToFileURL } from 'node:url';
 import { mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { makeSoundtrack } from './live-sound.mjs';
-import { FORMATS, clipTime } from './spec.mjs';
+import { FORMATS, clipTime, gradeFilter } from './spec.mjs';
 
 const RUNTIME = String.raw`
 const S = window.SPEC, T = window.TAKES;
@@ -19,6 +20,25 @@ const out3 = (x) => 1 - Math.pow(1 - clamp(x), 3);
 const outBack = (x) => { x = clamp(x); const c = 1.9; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
 const inOut = (x) => { x = clamp(x); return x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2; };
 const el = (tag, css, parent) => { const e = document.createElement(tag); if (css) e.style.cssText = css; if (parent) parent.appendChild(e); return e; };
+${gradeFilter.toString()}
+const grainUrl = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="140" height="140"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"/></filter><rect width="100%" height="100%" filter="url(#n)"/></svg>');
+function paintFinish(frame, img, l) {
+  if (img) img.style.filter = gradeFilter(l.grade);
+  if (l.blend) frame.style.mixBlendMode = l.blend;
+  const temp = l.grade && typeof l.grade.temperature === 'number' ? l.grade.temperature : 0;
+  if (temp) {
+    const wash = el('div', 'position:absolute;inset:0;pointer-events:none;mix-blend-mode:multiply;background:' + (temp > 0 ? '#ff9a3c' : '#6aa7ff') + ';opacity:' + (Math.min(1, Math.abs(temp)) * .28), frame);
+    wash.dataset.decor = '1';
+  }
+  if (l.vignette) {
+    const vig = el('div', 'position:absolute;inset:0;pointer-events:none;background:radial-gradient(ellipse at center, transparent 46%, rgba(0,0,0,.6) 100%)', frame);
+    vig.dataset.decor = '1';
+  }
+  if (l.grain) {
+    const grain = el('div', 'position:absolute;inset:0;pointer-events:none;opacity:.08;background-image:url("' + grainUrl + '");background-size:140px 140px', frame);
+    grain.dataset.decor = '1';
+  }
+}
 const stage = document.getElementById('stage');
 const W = S.width, H = S.height, M = S.margin, MY = S.marginY;
 const bg = el('div', 'position:absolute;inset:0;background:' + S.pal.bg, stage);
@@ -81,19 +101,25 @@ const built = S.scenes.map((sc) => {
   const layers = sc.layers.map((l) => {
     const place = (l.type === 'clip' || l.type === 'image') && slotAt < slots.length ? slots[slotAt++] : null;
     if (l.type === 'clip') {
-      const [x, y, w, h] = l.box === 'full' ? [0, 0, W, H] : l.box;
-      const radius = l.box === 'full' ? 0 : (l.radius ?? 26);
-      const shadow = l.box === 'full' ? '' : 'box-shadow:0 34px 110px rgba(0,0,0,.6)';
+      const full = l.box === 'full';
+      const [x, y, w, h] = full ? [0, 0, W, H] : l.box;
+      const radius = full ? 0 : (l.radius ?? 26);
       let host, frame;
       if (place) {
         const fit = Math.max(place.w / w, place.h / h);
-        host = el('div', 'position:absolute;left:' + place.x + 'px;top:' + place.y + 'px;width:' + place.w + 'px;height:' + place.h + 'px;overflow:hidden;background:#fff;border-radius:' + radius + 'px;' + shadow, root);
-        frame = el('div', 'position:absolute;left:50%;top:50%;width:' + w + 'px;height:' + h + 'px;overflow:hidden;transform:translate(-50%,-50%) scale(' + fit + ')', host);
+        host = el('div', 'position:absolute;left:' + place.x + 'px;top:' + place.y + 'px;width:' + place.w + 'px;height:' + place.h + 'px;overflow:hidden', root);
+        frame = el('div', 'position:absolute;left:50%;top:50%;width:' + w + 'px;height:' + h + 'px;overflow:hidden;isolation:isolate;transform:translate(-50%,-50%) scale(' + fit + ');background:#fff;border-radius:' + radius + 'px', host);
       } else {
-        frame = el('div', 'position:absolute;left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px;overflow:hidden;background:#fff;border-radius:' + radius + 'px;' + shadow, root);
-        host = frame;
+        host = el('div', 'position:absolute;left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px', root);
+        if (!full && l.shadow) {
+          const sw = Math.round(w * .76), sh = Math.max(18, Math.round(h * .06));
+          const ell = el('div', 'position:absolute;left:' + Math.round((w - sw) / 2) + 'px;top:' + (h - Math.round(sh * .4)) + 'px;width:' + sw + 'px;height:' + sh + 'px;border-radius:50%;background:rgba(0,0,0,.5);filter:blur(16px);pointer-events:none', host);
+          ell.dataset.decor = '1';
+        }
+        frame = el('div', 'position:absolute;inset:0;overflow:hidden;isolation:isolate;background:#fff;border-radius:' + radius + 'px;' + (full ? '' : 'box-shadow:0 34px 110px rgba(0,0,0,.6)'), host);
       }
       const img = el('img', 'position:absolute;left:0;top:0;max-width:none', frame);
+      paintFinish(frame, img, l);
       const marks = (l.overlays ?? []).map((o) => { const m = el('div', 'position:absolute;display:flex;align-items:center;white-space:nowrap;font:800 16px ' + S.pal.font + ';letter-spacing:-.02em;color:' + (o.color ?? '#fff') + ';background:' + (o.fill ?? 'transparent'), frame); m.textContent = o.text ?? ''; return { o, m }; });
       if (l.chrome) addChrome(host, l.chrome);
       return { l, node: host, img, w, h, marks };
@@ -124,19 +150,24 @@ const built = S.scenes.map((sc) => {
     if (l.type === 'image') {
       if (l.cam) {
         const x = place ? place.x : l.x, y = place ? place.y : l.y, w = place ? place.w : l.w, h = place ? place.h : (l.h || l.w);
-        const frame = el('div', 'position:absolute;left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px;overflow:hidden;border-radius:' + (l.radius ?? 0) + 'px', root);
+        const frame = el('div', 'position:absolute;left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px;overflow:hidden;isolation:isolate;border-radius:' + (l.radius ?? 0) + 'px', root);
         const img = el('img', 'position:absolute;left:0;top:0;max-width:none', frame);
         img.src = l.src;
+        paintFinish(frame, img, l);
         return { l, node: frame, img, w: w, h: h, lockH: !!(place || l.h) };
       }
       if (place) {
-        const node = el('img', 'position:absolute;left:' + place.x + 'px;top:' + place.y + 'px;width:' + place.w + 'px;height:' + place.h + 'px;object-fit:cover;border-radius:' + (l.radius ?? 0) + 'px', root);
-        node.src = l.src;
-        return { l, node };
+        const frame = el('div', 'position:absolute;left:' + place.x + 'px;top:' + place.y + 'px;width:' + place.w + 'px;height:' + place.h + 'px;overflow:hidden;isolation:isolate;border-radius:' + (l.radius ?? 0) + 'px', root);
+        const img = el('img', 'display:block;width:100%;height:100%;object-fit:cover', frame);
+        img.src = l.src;
+        paintFinish(frame, img, l);
+        return { l, node: frame, img };
       }
-      const node = el('img', 'position:absolute;left:' + l.x + 'px;top:' + l.y + 'px;width:' + l.w + 'px;border-radius:' + (l.radius ?? 0) + 'px', root);
-      node.src = l.src;
-      return { l, node };
+      const frame = el('div', 'position:absolute;left:' + l.x + 'px;top:' + l.y + 'px;width:' + l.w + 'px;border-radius:' + (l.radius ?? 0) + 'px;overflow:hidden;isolation:isolate', root);
+      const img = el('img', 'display:block;width:100%;height:auto', frame);
+      img.src = l.src;
+      paintFinish(frame, img, l);
+      return { l, node: frame, img };
     }
     if (l.type === 'lower') {
       const node = el('div', 'position:absolute;left:' + l.x + 'px;top:' + l.y + 'px;width:' + l.w + 'px;height:' + l.h + 'px;z-index:30;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:10px 16px 12px 14px;background:' + S.pal.bg + ';border-left:4px solid ' + S.pal.accent + ';border-radius:0 14px 14px 0', root);

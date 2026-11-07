@@ -350,6 +350,17 @@ export function toSrt(captions) {
   return (captions ?? []).map((cap, i) => `${i + 1}\n${srtStamp(cap.s)} --> ${srtStamp(cap.e)}\n${String(cap.text ?? '').replace(/\*/g, '')}\n`).join('\n');
 }
 
+const BLENDS = ['normal', 'multiply', 'screen'];
+
+// CSS filter for a footage grade. Temperature is a multiply overlay, not a filter.
+export function gradeFilter(grade) {
+  if (!grade || typeof grade !== 'object') return '';
+  const parts = [];
+  if (grade.contrast != null) parts.push('contrast(' + grade.contrast + ')');
+  if (grade.saturate != null) parts.push('saturate(' + grade.saturate + ')');
+  return parts.join(' ');
+}
+
 function insideSafe(spec, layer, label) {
   const margin = spec.margin ?? 0;
   const marginY = spec.marginY ?? margin;
@@ -440,6 +451,13 @@ export function validateSpec(spec) {
         if (layer.type === 'clip' && layer.box !== 'full' && !Array.isArray(layer.box)) errors.push(`scene ${i + 1} clip needs a box`);
         if (layer.type === 'image' && !layer.src) errors.push(`scene ${i + 1} image needs a src`);
         if (layer.type === 'clip' || layer.type === 'image') hasPicture = true;
+        if (layer.blend != null && !BLENDS.includes(layer.blend)) errors.push(`scene ${i + 1} blend must be normal, multiply, or screen`);
+        if (layer.grade && layer.grade.temperature != null) {
+          const temperature = layer.grade.temperature;
+          if (typeof temperature !== 'number' || !Number.isFinite(temperature) || temperature < -1 || temperature > 1) {
+            errors.push(`scene ${i + 1} grade.temperature must be from -1 to 1`);
+          }
+        }
         if (layer.type === 'endcard') {
           const line = endcardLine(spec, layer);
           const hold = endcardHold(spec, layer, scene);
