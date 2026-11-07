@@ -49,7 +49,8 @@ const built = S.scenes.map((sc) => {
       const [x, y, w, h] = l.box === 'full' ? [0, 0, 1920, 1080] : l.box;
       const frame = el('div', 'position:absolute;left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px;overflow:hidden;background:#fff;border-radius:' + (l.box === 'full' ? 0 : (l.radius ?? 26)) + 'px;' + (l.box === 'full' ? '' : 'box-shadow:0 34px 110px rgba(0,0,0,.6)'), root);
       const img = el('img', 'position:absolute;left:0;top:0;max-width:none', frame);
-      return { l, node: frame, img, w, h };
+      const marks = (l.overlays ?? []).map((o) => { const m = el('div', 'position:absolute;display:flex;align-items:center;white-space:nowrap;font:800 16px ' + S.pal.font + ';letter-spacing:-.02em;color:' + (o.color ?? '#fff') + ';background:' + (o.fill ?? 'transparent'), frame); m.textContent = o.text ?? ''; return { o, m }; });
+      return { l, node: frame, img, w, h, marks };
     }
     if (l.type === 'text') {
       const node = el('div', 'position:absolute;left:' + l.x + 'px;top:' + l.y + 'px;width:' + (l.w ?? 1760) + 'px;text-align:' + (l.align ?? 'center') + ';font:' + (l.weight ?? 800) + ' ' + l.size + 'px/' + (l.lh ?? 1.08) + ' ' + (l.font ?? S.pal.font) + ';letter-spacing:' + (l.ls ?? '-.02em') + ';color:' + S.pal.fg + ';text-shadow:0 6px 40px rgba(0,0,0,.45)', root);
@@ -121,6 +122,7 @@ window.seek = async (t) => {
         const K = Math.max(item.w / vw, item.h / vh) * z, iw = vw * K, ih = vh * K;
         const left = clamp(item.w / 2 - cx * K, item.w - iw, 0), top = clamp(item.h / 2 - cy * K, item.h - ih, 0);
         item.img.style.width = iw + 'px'; item.img.style.left = left + 'px'; item.img.style.top = top + 'px';
+        item.marks.forEach(({ o, m }) => { m.style.left = (left + o.x * K) + 'px'; m.style.top = (top + o.y * K) + 'px'; m.style.width = (o.w * K) + 'px'; m.style.height = (o.h * K) + 'px'; m.style.fontSize = ((o.size ?? 16) * K) + 'px'; m.style.paddingLeft = (6 * K) + 'px'; });
         const src = 'takes/' + l.take + '/' + frameAt(l.take, ct);
         if (item.src !== src) { item.src = src; item.img.src = src; waits.push(item.img.decode().catch(() => {})); }
       } else if (l.type === 'text') {
@@ -168,7 +170,7 @@ window.seek = async (t) => {
   });
   await Promise.all(waits);
 };
-window.ready = Promise.all([document.fonts.ready]);
+window.ready = Promise.all([...new Set([700, 800].map((w) => document.fonts.load(w + ' 40px ' + S.pal.font).catch(() => {})))]).then(() => document.fonts.ready);
 `;
 
 const fileUrl = (p) => pathToFileURL(p).href;
@@ -183,7 +185,7 @@ export async function compose(spec, { playwright, mode = 'final', times = [] }) 
     takes[name] = { viewport: idx.viewport, frames: idx.frames, moves: idx.events.filter((e) => ['move', 'step', 'click', 'down'].includes(e.type)).map((e) => ({ t: e.t, x: e.x, y: e.y })), events: idx.events };
   }
   const pageFile = `${spec.takes}/../${spec.id}-stage.html`;
-  writeFileSync(pageFile, `<!doctype html><meta charset="utf-8"><style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:${spec.pal.bg}}#stage{position:absolute;inset:0;overflow:hidden}</style><div id="stage"></div><script>window.SPEC=${JSON.stringify(spec)};window.TAKES=${JSON.stringify(takes)};</script><script>${RUNTIME}</script>`);
+  writeFileSync(pageFile, `<!doctype html><meta charset="utf-8">${spec.pal.fontLink ? `<link rel="stylesheet" href="${spec.pal.fontLink}">` : ''}<style>html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:${spec.pal.bg}}#stage{position:absolute;inset:0;overflow:hidden}</style><div id="stage"></div><script>window.SPEC=${JSON.stringify(spec)};window.TAKES=${JSON.stringify(takes)};</script><script>${RUNTIME}</script>`);
   const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--allow-file-access-from-files'] });
   const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
   page.on('pageerror', (e) => console.log('page error', e.message));
