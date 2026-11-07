@@ -9,9 +9,10 @@
 // Overlays draw on #stage for their own s and e, so a headline can outlive a cut.
 // A clip dur hides that clip at at + dur. The rest of the scene stays.
 // Final frames are stored at work/scenes/<format>/<first 16 hex of sceneKey>/ and assembled in scene order.
+import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { makeSoundtrack } from './live-sound.mjs';
 import { FORMATS, clipTime, gradeFilter, loopHoldPad, sceneKey } from './spec.mjs';
@@ -97,10 +98,11 @@ function addChrome(host, kind) {
     ['#ff5f57', '#febc2e', '#28c840'].forEach((color) => { const dot = el('div', 'width:8px;height:8px;border-radius:50%;background:' + color, bar); dot.dataset.decor = '1'; });
   }
 }
-const built = S.scenes.map((sc) => {
+const built = S.scenes.map((sc, si) => {
   const root = el('div', 'position:absolute;inset:0;display:none;transform-origin:50% 50%', stage);
   const slots = sc.layout === 'split' ? splitSlots() : [];
   let slotAt = 0;
+  root.dataset.scene = String(si);
   const layers = sc.layers.map((l) => {
     const place = (l.type === 'clip' || l.type === 'image') && slotAt < slots.length ? slots[slotAt++] : null;
     if (l.type === 'clip') {
@@ -491,6 +493,7 @@ window.seek = async (t) => {
   });
   await Promise.all(waits);
 };
+window.visibleSceneRoots = () => built.filter(({ root }) => root.style.display !== 'none').map(({ root }) => Number(root.dataset.scene));
 window.ready = Promise.all([...new Set([700, 800].map((w) => document.fonts.load(w + ' 40px ' + S.pal.font).catch(() => {})))]).then(() => document.fonts.ready);
 `;
 
@@ -581,6 +584,180 @@ function sceneFramesReady(dir, count) {
   return true;
 }
 
+function wavPeak(file) {
+  const buf = readFileSync(file);
+  let offset = 12;
+  while (offset + 8 <= buf.length) {
+    const id = buf.toString('ascii', offset, offset + 4);
+    const size = buf.readUInt32LE(offset + 4);
+    if (id === 'data') {
+      let peak = 0;
+      const end = Math.min(buf.length, offset + 8 + size);
+      for (let i = offset + 8; i + 1 < end; i += 2) peak = Math.max(peak, Math.abs(buf.readInt16LE(i)));
+      return peak / 32767;
+    }
+    offset += 8 + size + (size % 2);
+  }
+  return 0;
+}
+
+function meanVolumeDb(file) {
+  const run = spawnSync('ffmpeg', ['-hide_banner', '-nostats', '-i', file, '-af', 'volumedetect', '-f', 'null', '-'], { encoding: 'utf8' });
+  const text = `${run.stdout ?? ''}\n${run.stderr ?? ''}`;
+  const match = text.match(/mean_volume:\s*(-inf|-?[\d.]+)\s*dB/i);
+  if (!match) return null;
+  if (match[1].toLowerCase() === '-inf') return Number.NEGATIVE_INFINITY;
+  return Number(match[1]);
+}
+
+function findVoice(dir) {
+  if (!dir) return null;
+  for (const rel of ['assets/voiceover.wav', 'voiceover.wav']) {
+    const path = resolve(dir, rel);
+    if (existsSync(path)) return path;
+  }
+  return null;
+}
+
+function auditMix(spec, wav) {
+  try {
+    const peak = wavPeak(wav);
+    if (peak > 0.98) console.warn(`warning: soundtrack peak is ${peak.toFixed(3)}, above 0.98`);
+  } catch (error) {
+    console.warn(`warning: could not read soundtrack peak (${error.message})`);
+  }
+  const voice = findVoice(spec.out);
+  if (!voice) return;
+  try {
+    const voiceMean = meanVolumeDb(voice);
+    const bedMean = meanVolumeDb(wav);
+    if (voiceMean == null || bedMean == null) {
+      console.warn('warning: could not measure voice and bed loudness');
+      return;
+    }
+    if (voiceMean < bedMean - 8) {
+      console.warn(`warning: voice mean is ${voiceMean.toFixed(1)} dB, more than 8 dB below the bed mean ${bedMean.toFixed(1)} dB`);
+    }
+  } catch (error) {
+    console.warn(`warning: could not measure voice and bed loudness (${error.message})`);
+  }
+}
+
+function sceneCacheKey(spec, index) {
+  const scene = spec.scenes[index];
+  const takes = [];
+  for (const layer of scene.layers ?? []) {
+    if (layer.type !== 'clip' || !layer.take || !spec.takes) continue;
+    const indexPath = resolve(spec.takes, layer.take, 'index.json');
+    let mtime = 0;
+    try { mtime = Math.round(statSync(indexPath).mtimeMs); } catch { mtime = 0; }
+    takes.push([layer.take, mtime]);
+  }
+  const captions = (spec.captions ?? []).filter((cap) => cap && cap.e > scene.s && cap.s < scene.e);
+  const body = {
+    format: spec.format ?? null,
+    width: spec.width ?? null,
+    height: spec.height ?? null,
+    background: spec.background ?? null,
+    motion: spec.motion ?? null,
+    pal: spec.pal ?? null,
+    endcard: (scene.layers ?? []).some((layer) => layer.type === 'endcard') ? spec.endcard ?? null : null,
+    scene,
+    captions,
+    takes,
+  };
+  return createHash('sha256').update(JSON.stringify(body)).digest('hex');
+}
+
+function recordReroll(spec, work) {
+  const file = `${work}/scene-cache.json`;
+  let previous = null;
+  if (existsSync(file)) {
+    try { previous = JSON.parse(readFileSync(file, 'utf8')); } catch { previous = null; }
+  }
+  const sameFormat = previous && previous.format === (spec.format ?? null) && Array.isArray(previous.keys);
+  const reused = [];
+  const reshot = [];
+  const keys = (spec.scenes ?? []).map((_, index) => {
+    const key = sceneCacheKey(spec, index);
+    const hit = Boolean(sameFormat && previous.keys[index] === key);
+    (hit ? reused : reshot).push(index);
+    return key;
+  });
+  writeFileSync(file, JSON.stringify({ format: spec.format ?? null, keys }, null, 2));
+  writeFileSync(`${work}/reroll.json`, JSON.stringify({ reused, reshot }, null, 2));
+  console.log(`reroll: reused ${reused.length}, reshot ${reshot.length}`);
+}
+
+function recordMotion(file, findings) {
+  let doc = {};
+  if (existsSync(file)) {
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8'));
+      if (Array.isArray(parsed)) doc = { entries: parsed };
+      else if (parsed && typeof parsed === 'object') doc = parsed;
+    } catch { doc = {}; }
+  } else if (!findings.length) return;
+  doc.motion = findings;
+  writeFileSync(file, JSON.stringify(doc, null, 2));
+}
+
+function cutSampleTimes(start, duration, fps) {
+  const frame = 1 / fps;
+  const end = Math.min(start + 0.1, Math.max(start, duration - 1e-4));
+  const times = [];
+  const steps = Math.max(1, Math.round((end - start) / frame));
+  const count = Math.min(steps, Math.ceil(0.1 / frame) + 1);
+  for (let n = 0; n <= count; n += 1) {
+    const t = Math.min(start + n * frame, end);
+    const rounded = +t.toFixed(4);
+    if (!times.length || rounded > times[times.length - 1] + 1e-4) times.push(rounded);
+    if (t >= end - 1e-6) break;
+  }
+  return times;
+}
+
+function sceneSignature(ids) {
+  return [...ids].sort((a, b) => a - b).join(',');
+}
+
+async function sampleCuts(page, spec) {
+  const fps = spec.fps > 0 ? spec.fps : 30;
+  const frame = 1 / fps;
+  const duration = spec.duration ?? 0;
+  const findings = [];
+  for (const scene of spec.scenes ?? []) {
+    const start = scene.s ?? 0;
+    const times = cutSampleTimes(start, duration, fps);
+    const visible = [];
+    for (const t of times) {
+      await page.evaluate((x) => window.seek(x), t);
+      visible.push(await page.evaluate(() => window.visibleSceneRoots()));
+    }
+    const oneT = start + frame;
+    const atOne = times.findIndex((t) => Math.abs(t - oneT) < frame * 0.5 && t > start + 1e-6);
+    if (atOne >= 0 && visible[atOne].length >= 2) {
+      findings.push({
+        t: +start.toFixed(3),
+        type: 'motion',
+        reason: `two scene roots are visible one frame after the cut (${visible[atOne].join(', ')})`,
+      });
+    }
+    let flips = 0;
+    for (let i = 1; i < visible.length; i += 1) {
+      if (sceneSignature(visible[i]) !== sceneSignature(visible[i - 1])) flips += 1;
+    }
+    if (flips >= 2) {
+      findings.push({
+        t: +start.toFixed(3),
+        type: 'motion',
+        reason: 'the visible scene flips twice inside a tenth of a second',
+      });
+    }
+  }
+  return findings;
+}
+
 export async function compose(spec, { playwright, mode = 'final', times = [], base = 'brag' } = {}) {
   const { chromium } = await import(fileUrl(playwright));
   const work = `${spec.out}/work`;
@@ -612,6 +789,9 @@ ${RUNTIME}</script>`);
       manifest.push({ t: times[i], file: name });
     }
     writeFileSync(`${work}/stills.json`, JSON.stringify(manifest, null, 2));
+    const motion = await sampleCuts(page, spec);
+    recordMotion(`${work}/critique.json`, motion);
+    recordReroll(spec, work);
     await browser.close();
     return manifest;
   }
@@ -666,13 +846,15 @@ ${RUNTIME}</script>`);
   posterFrame = Math.min(assembled - 1, Math.max(0, posterFrame));
   copyFileSync(`${work}/frames/${String(posterFrame).padStart(5, '0')}.jpg`, `${spec.out}/${base}.jpg`);
   copyFileSync(`${work}/frames/${String(posterFrame).padStart(5, '0')}.jpg`, `${work}/frames/00000.jpg`);
-  makeSoundtrack(spec, takes, `${work}/music.wav`);
+  const wav = `${work}/music.wav`;
+  makeSoundtrack(spec, takes, wav);
+  auditMix(spec, wav);
   const pad = loopHoldPad(spec);
   if (spec.loopHold === true && pad === 0) console.warn('warning: loopHold skipped because the hold would pass 35.5s');
   const duration = spec.duration + pad;
   const meta = `${work}/ffmetadata.txt`;
   const hasMeta = writeFfmetadata(spec, duration, meta);
-  const encode = ['-y', '-loglevel', 'error', '-framerate', String(fps), '-i', `${work}/frames/%05d.jpg`, '-i', `${work}/music.wav`];
+  const encode = ['-y', '-loglevel', 'error', '-framerate', String(fps), '-i', `${work}/frames/%05d.jpg`, '-i', wav];
   if (hasMeta) encode.push('-f', 'ffmetadata', '-i', meta);
   if (pad > 0) encode.push('-vf', `tpad=stop_mode=clone:stop_duration=${pad}`, '-af', `apad=pad_dur=${pad}`);
   encode.push('-c:v', 'libx264', '-crf', '17', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '224k');
@@ -680,5 +862,6 @@ ${RUNTIME}</script>`);
   encode.push('-movflags', '+faststart', '-t', String(duration), `${spec.out}/${base}.mp4`);
   execFileSync('ffmpeg', encode);
   rmSync(`${work}/frames`, { recursive: true, force: true });
+  recordReroll(spec, work);
   return { video: `${spec.out}/${base}.mp4`, poster: `${spec.out}/${base}.jpg` };
 }

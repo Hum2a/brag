@@ -13,6 +13,7 @@ import {
   TONES,
   beatGrid,
   clipTime,
+  critiqueSpec,
   gradeFilter,
   holdsFor,
   loopHoldPad,
@@ -273,6 +274,28 @@ const unburned = prepareSpec(goodSpec());
 unburned.burnCaptions = false;
 const unburnedResult = validateSpec(unburned);
 assert(unburnedResult.ok && toSrt(unburned.captions).includes('Horse Tinder.'), 'burnCaptions false still keeps the srt');
+
+const lateLine = prepareSpec(goodSpec());
+lateLine.captions = [
+  { s: 3, e: 6.5, text: 'Dating apps were built for humans.' },
+  { s: 6.5, e: 10.5, text: 'Swipe through eligible horses.' },
+  { s: 10.5, e: 15, text: 'Horse Tinder.' },
+];
+lateLine.scenes[0].layers[0].at = 3;
+const lateLineResult = critiqueSpec(lateLine);
+assert(
+  lateLineResult.errors.some((error) => error.includes('after 2 seconds')),
+  'a fixture whose first line starts at 3 seconds should fail critiqueSpec',
+);
+
+const covered = prepareSpec(goodSpec());
+covered.captions = [
+  { s: 0, e: 5, text: 'Dating apps were built for humans.' },
+  { s: 5, e: 10, text: 'Swipe through eligible horses.' },
+  { s: 10, e: 15, text: 'Horse Tinder.' },
+];
+const coveredResult = critiqueSpec(covered);
+assert(coveredResult.errors.length === 0, `a fixture with captions covering the cut should pass critiqueSpec: ${coveredResult.errors.join('; ')}`);
 
 assert(JSON.stringify(Object.keys(TONE_MUSIC).sort()) === JSON.stringify([...TONES].sort()), 'every tone needs a music preset');
 for (const preset of Object.values(TONE_MUSIC)) assert(DENSITIES.includes(preset.density), `unknown density ${preset.density}`);

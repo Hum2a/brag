@@ -209,6 +209,14 @@ node <script-dir>/render.mjs <output-dir>/spec.json --platform reels
 
 Each scene's frames are kept in `work/scenes/<format>/<hash>/`. The hash is the first 16 hex characters of that scene's key: its layers, the captions and overlays whose windows overlap it, the palette, the motion, and the stage size. A second spec that reuses that scene, even in a different order, reuses those frames. A rearranged cut is another spec file.
 
+The same pass writes three reports:
+
+- `work/pacing.json` errors when the first caption and the first text layer both start after 2 seconds, and when a gap between consecutive captions is longer than 2.5 seconds. It warns when `music.drop` is set and no scene boundary is within 0.35 seconds of it. Errors fail the stills run after the contact sheet is written. Warnings print and do not fail.
+- `work/critique.json` gains a `motion` entry when a cut shows two scene roots one frame later, or the visible scene flips twice inside a tenth of a second. The check samples those cuts, not every frame.
+- `work/reroll.json` is `{ reused, reshot }` scene indexes from the scene-cache hit flags. The render prints both counts. A second run is the diff.
+
+A full render warns when the soundtrack wav peaks above 0.98. When a voice file is present, it compares ffmpeg `volumedetect` means and warns when the voice sits more than 8 dB below the bed. Those warnings do not fail the render.
+
 `--pack` reflows the same spec into the other two aspect ratios. It is opt-in because each pass screenshots every frame.
 
 `--gif` writes `brag-hook.gif` from the first beat at or under 6s: 15fps, 720px wide, no audio, with palettegen. `--webm` writes a silent VP9 `brag-hook.webm` of that same span. `--thumbs` writes `brag-thumb.jpg` from `poster` and `brag-thumb-end.jpg` from a settled frame in the last scene. A `thumbs` pair in the spec overrides those times. The stills are frames from the render. ffmpeg does not draw text on them.

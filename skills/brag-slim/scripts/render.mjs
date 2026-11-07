@@ -7,7 +7,8 @@
 //   node render.mjs spec.json --platform reels
 //   node render.mjs spec.json --playwright path/to/playwright
 //
-// --stills validates, shoots a settled frame of every scene plus each cut, and writes work/contact.jpg.
+// --stills validates, shoots a settled frame of every scene plus each cut, writes work/contact.jpg,
+// and writes work/pacing.json. Pacing errors fail the run after the contact sheet is written.
 // A full run writes brag.mp4, bakes the poster as frame 0, writes brag.jpg and brag.srt, and mixes
 // voiceover.wav when one is sitting next to the spec. --pack also renders the other two formats.
 // --platform reels|tiktok, on a vertical master, writes a 1080x1920 encode with captions raised
@@ -19,7 +20,7 @@ import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compose } from './live-compose.mjs';
-import { FORMATS, loopHoldPad, platformPreset, prepareSpec, reflow, stillTimes, thumbTimes, toSrt, trimPoint, validateSpec } from './spec.mjs';
+import { critiqueSpec, FORMATS, loopHoldPad, platformPreset, prepareSpec, reflow, stillTimes, thumbTimes, toSrt, trimPoint, validateSpec } from './spec.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -259,6 +260,13 @@ async function renderOne(spec, { playwright, stills, base, loudnorm = false }) {
     const contact = join(spec.out, 'work', base === 'brag' ? 'contact.jpg' : `${base}-contact.jpg`);
     tile(join(spec.out, 'work', 'stills'), manifest.length, contact);
     console.log(`stills: ${contact}`);
+    const pacing = critiqueSpec(spec);
+    writeFileSync(join(spec.out, 'work', 'pacing.json'), JSON.stringify(pacing, null, 2));
+    for (const warning of pacing.warnings) console.warn(`warning: ${warning}`);
+    if (pacing.errors.length) {
+      for (const error of pacing.errors) console.error(`error: ${error}`);
+      process.exit(1);
+    }
     return;
   }
   await compose(spec, { playwright, mode: 'final', base });
