@@ -107,16 +107,94 @@ function layerCopy(layer) {
   return '';
 }
 
-function textHold(layer, scene) {
+export function textHold(layer, scene) {
   const dur = scene.e - scene.s;
+  const until = layer.until ?? dur;
+  if (layer.type === 'lower') {
+    const end = Math.min(until, dur);
+    const settledAt = (layer.at ?? 0) + 0.25;
+    return (end - 0.25) - settledAt;
+  }
   const stagger = layer.stagger ?? (layer.anim === 'words' ? 0.085 : 0.22);
   const settle = layer.anim === 'slam' ? 0.3 : layer.anim === 'mask' ? 0.42 : 0.34;
   let units = 1;
   if (layer.anim === 'words') units = Math.max(1, wordCount(layerCopy(layer)));
   else if (layer.type === 'text') units = Math.max(1, layer.lines?.length ?? 1);
   const settledAt = (layer.at ?? 0) + Math.max(0, units - 1) * stagger + settle;
-  const until = layer.until ?? dur;
   return until - settledAt;
+}
+
+function lowerCopy(layer) {
+  return [layer.name, layer.line].filter(Boolean).join(' ');
+}
+
+function lowerBox(spec) {
+  const margin = spec.margin ?? 0;
+  const marginY = spec.marginY ?? margin;
+  const width = spec.width ?? 0;
+  const height = spec.height ?? 0;
+  const size = Math.max(22, Math.round(height * 0.032));
+  const lineSize = Math.max(16, Math.round(size * 0.7));
+  const h = Math.round(size * 1.15 + lineSize * 1.25 + 28);
+  const w = Math.min(Math.round(width * 0.46), Math.max(1, width - margin * 2));
+  const capH = Math.round(height * 0.037 * 1.15);
+  const y = height - marginY - capH - 16 - h;
+  return { x: margin, y, w, h, size, lineSize };
+}
+
+function placeLower(spec, layer) {
+  const box = lowerBox(spec);
+  layer.x = box.x;
+  layer.y = box.y;
+  layer.w = box.w;
+  layer.h = box.h;
+  layer.size = box.size;
+  layer.lineSize = box.lineSize;
+}
+
+function stickerBox(layer) {
+  const size = layer.size ?? (layer.shape === 'step' ? 64 : 22);
+  if (layer.shape === 'step') {
+    const d = layer.w ?? layer.h ?? 64;
+    return { x: layer.x, y: layer.y, w: layer.w ?? d, h: layer.h ?? d };
+  }
+  const text = String(layer.text ?? '');
+  const w = layer.w ?? Math.max(88, Math.ceil(text.length * size * 0.62) + 36);
+  const h = layer.h ?? Math.round(size * 2.1);
+  return { x: layer.x, y: layer.y, w, h };
+}
+
+function endcardLine(spec, layer) {
+  return layer.line || spec.endcard?.line || layer.name || spec.endcard?.name || '';
+}
+
+function endcardMark(spec, layer) {
+  return layer.mark || spec.endcard?.mark || '';
+}
+
+function endcardHold(spec, layer, scene) {
+  const sting = endcardMark(spec, layer) ? 0.6 : 0;
+  return (scene.e - scene.s) - (layer.at ?? 0) - sting;
+}
+
+export function holdsFor(spec, bounds) {
+  for (let i = 0; i < spec.scenes.length; i += 1) {
+    const scene = { ...spec.scenes[i], s: bounds[i], e: bounds[i + 1] };
+    if (!(scene.e > scene.s + 0.05)) return false;
+    for (const layer of scene.layers ?? []) {
+      if (layer.type === 'text' && layerCopy(layer).trim()) {
+        if (textHold(layer, scene) + 1e-3 < requiredHold(layerCopy(layer))) return false;
+      }
+      if (layer.type === 'lower' && lowerCopy(layer).trim()) {
+        if (textHold(layer, scene) + 1e-3 < requiredHold(lowerCopy(layer))) return false;
+      }
+      if (layer.type === 'endcard') {
+        const line = endcardLine(spec, layer);
+        if (line && endcardHold(spec, layer, scene) + 1e-3 < requiredHold(line)) return false;
+      }
+    }
+  }
+  return true;
 }
 
 function walkStrings(value, visit) {
@@ -153,6 +231,7 @@ export function prepareSpec(raw) {
     if (scene.wipe == null) scene.wipe = motion.wipe;
     for (const layer of scene.layers ?? []) {
       if (layer.type === 'text' && layer.anim == null) layer.anim = motion.anim;
+      if (layer.type === 'lower') placeLower(spec, layer);
     }
   }
   return spec;
@@ -177,6 +256,7 @@ export function reflow(spec, format) {
       if (typeof layer.w === 'number') layer.w = Math.round(layer.w * sx);
       if (typeof layer.h === 'number') layer.h = Math.round(layer.h * sy);
       if (typeof layer.size === 'number') layer.size = Math.max(18, Math.round(layer.size * s));
+      if (Array.isArray(layer.point)) layer.point = layer.point.map((n, i) => Math.round(n * (i === 0 ? sx : sy)));
     }
   }
   next.format = format;
@@ -229,7 +309,7 @@ function srtStamp(t) {
 }
 
 export function toSrt(captions) {
-  return (captions ?? []).map((cap, i) => `${i + 1}\n${srtStamp(cap.s)} --> ${srtStamp(cap.e)}\n${cap.text}\n`).join('\n');
+  return (captions ?? []).map((cap, i) => `${i + 1}\n${srtStamp(cap.s)} --> ${srtStamp(cap.e)}\n${String(cap.text ?? '').replace(/\*/g, '')}\n`).join('\n');
 }
 
 function insideSafe(spec, layer, label) {
@@ -283,6 +363,8 @@ export function validateSpec(spec) {
   else {
     captions.forEach((cap, i) => {
       if (!cap || typeof cap.text !== 'string' || !cap.text.trim()) errors.push(`caption ${i + 1} needs text`);
+      else if (cap.style != null && cap.style !== 'plain' && cap.style !== 'pill') errors.push(`caption ${i + 1} style must be plain or pill`);
+      else if (cap.raise != null && !(typeof cap.raise === 'number' && cap.raise >= 0)) errors.push(`caption ${i + 1} raise must be pixels`);
       else if (!(cap.e > cap.s)) errors.push(`caption ${i + 1} ends before it starts`);
       else {
         const hold = cap.e - cap.s;
@@ -316,10 +398,33 @@ export function validateSpec(spec) {
         if (layer.type === 'image' && !layer.src) errors.push(`scene ${i + 1} image needs a src`);
         if (layer.type === 'clip' || layer.type === 'image') hasPicture = true;
         if (layer.type === 'endcard') {
-          const line = layer.line || spec.endcard?.line || layer.name || spec.endcard?.name || '';
-          const hold = (scene.e - scene.s) - (layer.at ?? 0);
+          const line = endcardLine(spec, layer);
+          const hold = endcardHold(spec, layer, scene);
           const need = requiredHold(line);
           if (line && hold + 1e-3 < need) errors.push(`scene ${i + 1} end card is settled for ${hold.toFixed(2)}s and needs ${need.toFixed(2)}s`);
+        }
+        if (layer.type === 'lower') {
+          const copy = lowerCopy(layer);
+          if (!layer.name || !layer.line) errors.push(`scene ${i + 1} lower third needs a name and a line`);
+          else {
+            const problem = insideSafe(spec, { ...layer, ...lowerBox(spec) }, `scene ${i + 1} lower`);
+            if (problem) errors.push(problem);
+            const hold = textHold(layer, scene);
+            const need = requiredHold(copy);
+            if (hold + 1e-3 < need) errors.push(`scene ${i + 1} lower third "${copy}" is settled for ${hold.toFixed(2)}s and needs ${need.toFixed(2)}s`);
+          }
+        }
+        if (layer.type === 'sticker') {
+          if (!['arrow', 'pill', 'step'].includes(layer.shape)) errors.push(`scene ${i + 1} sticker shape must be arrow, pill, or step`);
+          if (typeof layer.text !== 'string' || !layer.text.trim()) errors.push(`scene ${i + 1} sticker needs text`);
+          if (typeof layer.x !== 'number' || typeof layer.y !== 'number') errors.push(`scene ${i + 1} sticker needs x and y on the stage`);
+          else {
+            const problem = insideSafe(spec, { ...layer, ...stickerBox(layer) }, `scene ${i + 1} sticker`);
+            if (problem) errors.push(problem);
+          }
+          if (layer.point != null && layer.shape === 'arrow' && (!Array.isArray(layer.point) || layer.point.length !== 2 || layer.point.some((n) => typeof n !== 'number'))) {
+            errors.push(`scene ${i + 1} sticker point must be [x, y]`);
+          }
         }
         if (layer.type === 'text' || layer.type === 'count') {
           const copy = layerCopy(layer);

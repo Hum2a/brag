@@ -82,16 +82,49 @@ const built = S.scenes.map((sc) => {
       node.src = l.src;
       return { l, node };
     }
+    if (l.type === 'lower') {
+      const node = el('div', 'position:absolute;left:' + l.x + 'px;top:' + l.y + 'px;width:' + l.w + 'px;height:' + l.h + 'px;z-index:30;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center;gap:2px;padding:10px 16px 12px 14px;background:' + S.pal.bg + ';border-left:4px solid ' + S.pal.accent + ';border-radius:0 14px 14px 0', root);
+      node.setAttribute('data-critique', '1');
+      const name = el('div', 'font:800 ' + (l.size || 32) + 'px/1.1 ' + S.pal.font + ';letter-spacing:-.03em;color:' + S.pal.fg, node);
+      name.textContent = l.name || '';
+      const line = el('div', 'font:600 ' + (l.lineSize || Math.round((l.size || 32) * .7)) + 'px/1.2 ' + S.pal.font + ';color:' + S.pal.fg, node);
+      line.textContent = l.line || '';
+      return { l, node };
+    }
+    if (l.type === 'sticker') {
+      const node = el('div', 'position:absolute;left:' + l.x + 'px;top:' + l.y + 'px;z-index:34;pointer-events:none', root);
+      if (l.shape === 'arrow' && Array.isArray(l.point)) {
+        const x1 = 18, y1 = 18, dx = l.point[0] - l.x, dy = l.point[1] - l.y;
+        const len = Math.max(1, Math.hypot(dx - x1, dy - y1));
+        const ang = Math.atan2(dy - y1, dx - x1) * 180 / Math.PI;
+        const shaft = el('div', 'position:absolute;height:3px;border-radius:2px;background:' + S.pal.accent + ';transform-origin:0 50%;width:' + len + 'px', node);
+        shaft.style.left = x1 + 'px';
+        shaft.style.top = (y1 - 1) + 'px';
+        shaft.style.transform = 'rotate(' + ang + 'deg)';
+        const head = el('div', 'position:absolute;width:12px;height:12px;background:' + S.pal.accent + ';transform:translate(-50%,-50%) rotate(45deg)', node);
+        head.style.left = dx + 'px';
+        head.style.top = dy + 'px';
+      }
+      const step = l.shape === 'step';
+      const label = el('div', step
+        ? 'position:relative;width:64px;height:64px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:' + S.pal.accent + ';color:' + S.pal.bg + ';font:800 28px/1 ' + S.pal.font
+        : 'position:relative;display:inline-flex;align-items:center;padding:8px 14px;border-radius:999px;background:' + S.pal.accent + ';color:' + S.pal.bg + ';font:800 22px/1 ' + S.pal.font + ';letter-spacing:-.02em;white-space:nowrap', node);
+      label.textContent = l.text || '';
+      return { l, node };
+    }
     if (l.type === 'endcard') {
       const card = S.endcard || {};
       const node = el('div', 'position:absolute;left:' + M + 'px;right:' + M + 'px;top:' + MY + 'px;bottom:' + MY + 'px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:.35em', root);
+      const markText = l.mark || card.mark || '';
+      const mark = markText ? el('div', 'font:800 ' + Math.round(H * .2) + 'px/.9 ' + S.pal.font + ';letter-spacing:-.04em;color:' + S.pal.accent, node) : null;
+      if (mark) mark.textContent = markText;
       const name = el('div', 'font:800 ' + Math.round(H * .086) + 'px/1.02 ' + S.pal.font + ';letter-spacing:-.035em;color:' + S.pal.fg, node);
       name.textContent = l.name || card.name || '';
       const line = el('div', 'font:600 ' + Math.round(H * .034) + 'px/1.25 ' + S.pal.font + ';color:' + S.pal.fg + ';max-width:18em', node);
       line.textContent = l.line || card.line || '';
       const url = el('div', 'font:700 ' + Math.round(H * .026) + 'px/1.2 ' + S.pal.font + ';letter-spacing:.01em;color:' + S.pal.accent + ';margin-top:.4em', node);
       url.textContent = l.url || card.url || '';
-      return { l, node, name, line, url };
+      return { l, node, name, line, url, mark };
     }
     const node = el('div', 'position:absolute;left:' + l.x + 'px;top:' + l.y + 'px;width:' + l.w + 'px;height:' + l.h + 'px;border-radius:' + (l.radius ?? 0) + 'px;background:' + l.fill, root);
     return { l, node };
@@ -108,6 +141,19 @@ cap.style.fontSize = Math.round(H * .037) + 'px';
 const veil = el('div', 'position:absolute;inset:0;z-index:45;pointer-events:none;background:' + S.pal.bg + ';opacity:0', stage);
 const shutter = el('div', 'position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:50', stage);
 const bands = [S.pal.accent, S.pal.glow || S.pal.accent, S.pal.bg].map((c) => el('div', 'position:absolute;top:-30%;height:160%;width:170%;background:' + c + ';transform:translateX(-140%) skewX(-16deg)', shutter));
+function setRich(node, text) {
+  const raw = String(text == null ? '' : text);
+  if (node.dataset.raw === raw) return;
+  node.dataset.raw = raw;
+  node.replaceChildren();
+  const parts = raw.split('*');
+  if (parts.length % 2 === 0) { node.textContent = parts.join(''); return; }
+  parts.forEach((part, i) => {
+    if (!part) return;
+    if (i % 2 === 1) { const s = document.createElement('span'); s.style.color = S.pal.accent; s.textContent = part; node.appendChild(s); }
+    else node.appendChild(document.createTextNode(part));
+  });
+}
 
 window.seek = async (t) => {
   const beat = (t % .5) / .5, pulse = Math.pow(1 - beat, 3);
@@ -151,10 +197,18 @@ window.seek = async (t) => {
         const src = (S.takesPrefix || 'takes') + '/' + l.take + '/' + frameAt(l.take, ct);
         if (item.src !== src) { item.src = src; item.img.src = src; waits.push(item.img.decode().catch(() => {})); }
       } else if (l.type === 'text') {
-        node.style.visibility = l.until !== undefined && st >= l.until ? 'hidden' : 'visible';
+        const exit = l.exit > 0 ? l.exit : 0;
+        const until = l.until != null ? l.until : (sc.e - sc.s);
+        const gone = exit > 0 ? st >= until : (l.until !== undefined && st >= l.until);
+        node.style.visibility = gone ? 'hidden' : 'visible';
+        const leave = exit > 0 ? clamp((st - (until - exit)) / exit) : 0;
         item.parts.forEach((part, i) => {
           const d = at + i * (l.stagger ?? (l.anim === 'words' ? .085 : .22)), x = st - d;
-          if (l.anim === 'slam') {
+          if (leave > 0 && st < until) {
+            part.style.opacity = String(1 - leave);
+            part.style.transformOrigin = '50% 50%';
+            part.style.transform = l.anim === 'mask' ? 'translateY(' + (leave * 112) + '%)' : 'translateY(' + (leave * 46) + 'px)';
+          } else if (l.anim === 'slam') {
             const k = clamp(x / .22), s = 1.5 - .5 * outBack(x / .3);
             part.style.opacity = k; part.style.transform = 'scale(' + s + ')';
             part.style.transformOrigin = '50% 60%';
@@ -165,10 +219,30 @@ window.seek = async (t) => {
             part.style.transform = 'translateY(' + (1 - outBack(x / .34)) * 46 + 'px) rotate(' + (1 - out3(x / .34)) * 4 + 'deg)';
           }
         });
+      } else if (l.type === 'lower') {
+        const dur = sc.e - sc.s;
+        const end = Math.min(l.until != null ? l.until : dur, dur);
+        if (st < at || st >= end) { node.style.visibility = 'hidden'; node.style.opacity = '0'; }
+        else {
+          const inn = clamp((st - at) / .25), out = clamp((st - (end - .25)) / .25), k = Math.min(inn, 1 - out);
+          node.style.visibility = 'visible';
+          node.style.opacity = String(k);
+          node.style.transform = 'translateY(' + ((inn < 1 ? (1 - inn) : out) * 18) + 'px)';
+        }
+      } else if (l.type === 'sticker') {
+        node.style.opacity = st >= at ? '1' : '0';
       } else if (l.type === 'endcard') {
         const p = out3((st - at) / .45);
         node.style.opacity = st >= at ? 1 : 0;
         node.style.transform = 'translateY(' + (1 - p) * 36 + 'px)';
+        if (item.mark) {
+          const showMark = st - at < .6;
+          item.mark.style.display = showMark ? 'block' : 'none';
+          item.name.style.display = showMark ? 'none' : '';
+          item.line.style.display = showMark ? 'none' : '';
+          item.url.style.display = showMark ? 'none' : '';
+          item.mark.style.transform = showMark ? 'scale(' + (1.45 - .45 * out3(Math.max(0, st - at) / .6)) + ')' : '';
+        }
       } else if (l.type === 'count') {
         const k = out3((st - at) / (l.dur ?? 1.2));
         node.style.opacity = st >= at ? 1 : 0;
@@ -192,7 +266,24 @@ window.seek = async (t) => {
   let shown = null;
   for (const c of S.captions || []) if (t >= c.s && t < c.e) shown = c;
   if (!shown) { cap.style.opacity = 0; scrim.style.opacity = 0; }
-  else { cap.style.opacity = clamp((t - shown.s) / .12); scrim.style.opacity = cap.style.opacity; cap.textContent = shown.text; }
+  else {
+    const raise = shown.raise || 0;
+    const pill = shown.style === 'pill';
+    cap.style.bottom = (MY + raise) + 'px';
+    cap.style.background = pill ? S.pal.bg : 'transparent';
+    cap.style.borderRadius = pill ? '999px' : '0';
+    cap.style.padding = pill ? '.42em .9em' : '0';
+    cap.style.boxShadow = pill ? '0 10px 40px rgba(0,0,0,.35)' : 'none';
+    if (pill) {
+      cap.style.left = '50%'; cap.style.right = 'auto'; cap.style.width = 'max-content'; cap.style.maxWidth = (W - M * 2) + 'px'; cap.style.transform = 'translateX(-50%)';
+    } else {
+      cap.style.left = M + 'px'; cap.style.right = M + 'px'; cap.style.width = 'auto'; cap.style.maxWidth = 'none'; cap.style.transform = 'none';
+    }
+    cap.style.opacity = clamp((t - shown.s) / .12);
+    scrim.style.height = Math.round(MY * 2.1 + raise) + 'px';
+    scrim.style.opacity = pill ? 0 : cap.style.opacity;
+    setRich(cap, shown.text);
+  }
   let dip = 0;
   for (const { sc } of built) {
     if ((sc.wipe === 'dip' || sc.wipe === 'fade') && sc.s > 0) {

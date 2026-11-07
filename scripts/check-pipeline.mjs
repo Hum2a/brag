@@ -9,8 +9,10 @@ import {
   DENSITIES,
   TONE_MUSIC,
   TONES,
+  holdsFor,
   prepareSpec,
   reflow,
+  textHold,
   toSrt,
   validateSpec,
 } from '../skills/brag-slim/scripts/spec.mjs';
@@ -94,6 +96,33 @@ const square = validateSpec(prepareSpec(reflow(prepareSpec(goodSpec()), 'square'
 assert(square.ok, `square reflow failed: ${square.errors.join('; ')}`);
 
 assert(toSrt(valid ? prepareSpec(goodSpec()).captions : []).includes('Horse Tinder.'), 'srt should include caption text');
+
+const briefLower = prepareSpec(goodSpec());
+briefLower.scenes[0].layers.push({ type: 'lower', name: 'Ada', line: 'Wrote the notes', at: 0, until: 1 });
+const briefLowerResult = validateSpec(briefLower);
+assert(!briefLowerResult.ok && briefLowerResult.errors.some((error) => error.includes('lower third') && error.includes('needs')), `a short lower third should fail: ${briefLowerResult.errors.join('; ')}`);
+
+const spoken = { type: 'text', anim: 'slam', lines: [['Hold this line']], at: 0.2, until: 3.2 };
+const spokenScene = { s: 0, e: 5 };
+const held = textHold(spoken, spokenScene);
+const heldExit = textHold({ ...spoken, exit: 0.8 }, spokenScene);
+assert(heldExit === held, `exit reduced the hold from ${held} to ${heldExit}`);
+assert(Math.abs(spoken.at + 0.3 + heldExit - spoken.until) < 1e-9, `measured hold ends at ${spoken.at + 0.3 + heldExit}, until is ${spoken.until}`);
+
+const sting = prepareSpec(goodSpec());
+sting.scenes[1].e = 14.2;
+sting.scenes[2].s = 14.2;
+sting.scenes[2].layers[0].at = 0;
+sting.scenes[2].layers[0].mark = 'HT';
+const stingBounds = [0, 3, 14.2, 15];
+assert(holdsFor(sting, stingBounds) === false, 'a mark sting should shorten a tight end card');
+const quiet = structuredClone(sting);
+delete quiet.scenes[2].layers[0].mark;
+assert(holdsFor(quiet, stingBounds) === true, 'the same end card without a mark still holds');
+
+const emphasized = toSrt([{ s: 0.2, e: 2.4, text: 'Swipe *left* now.' }]);
+assert(emphasized.includes('Swipe left now.'), 'srt should keep the emphasized word');
+assert(!emphasized.includes('*'), 'srt should strip emphasis marks');
 
 assert(JSON.stringify(Object.keys(TONE_MUSIC).sort()) === JSON.stringify([...TONES].sort()), 'every tone needs a music preset');
 for (const preset of Object.values(TONE_MUSIC)) assert(DENSITIES.includes(preset.density), `unknown density ${preset.density}`);
