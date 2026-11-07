@@ -51,8 +51,10 @@ const built = S.scenes.map((sc) => {
       const [x, y, w, h] = l.box === 'full' ? [0, 0, W, H] : l.box;
       const frame = el('div', 'position:absolute;left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px;overflow:hidden;background:#fff;border-radius:' + (l.box === 'full' ? 0 : (l.radius ?? 26)) + 'px;' + (l.box === 'full' ? '' : 'box-shadow:0 34px 110px rgba(0,0,0,.6)'), root);
       const img = el('img', 'position:absolute;left:0;top:0;max-width:none', frame);
+      const spot = l.spotlight ? el('div', 'position:absolute;inset:0;pointer-events:none', frame) : null;
+      if (spot) spot.dataset.decor = '1';
       const marks = (l.overlays ?? []).map((o) => { const m = el('div', 'position:absolute;display:flex;align-items:center;white-space:nowrap;font:800 16px ' + S.pal.font + ';letter-spacing:-.02em;color:' + (o.color ?? '#fff') + ';background:' + (o.fill ?? 'transparent'), frame); m.textContent = o.text ?? ''; return { o, m }; });
-      return { l, node: frame, img, w, h, marks };
+      return { l, node: frame, img, w, h, marks, spot };
     }
     if (l.type === 'text') {
       const node = el('div', 'position:absolute;left:' + l.x + 'px;top:' + l.y + 'px;width:' + (l.w ?? (W - M * 2)) + 'px;text-align:' + (l.align ?? 'center') + ';font:' + (l.weight ?? 800) + ' ' + l.size + 'px/' + (l.lh ?? 1.08) + ' ' + (l.font ?? S.pal.font) + ';letter-spacing:' + (l.ls ?? '-.02em') + ';color:' + S.pal.fg + ';text-shadow:0 6px 40px rgba(0,0,0,.45)', root);
@@ -134,7 +136,9 @@ window.seek = async (t) => {
         node.style.transform = l.box === 'full' ? '' : 'perspective(1600px) rotateY(' + (tilt * (1 - clamp((st - at) / 1.2))) + 'deg) translateY(' + (1 - p) * 90 + 'px) scale(' + (.92 + .08 * p) + ')';
         if (!vis) continue;
         const ct = (l.from ?? 0) + (st - at) * (l.speed ?? 1), tk = T[l.take], vw = tk.viewport.width, vh = tk.viewport.height;
-        let z = l.zoom ?? 1, cx = l.cx ?? vw / 2, cy = l.cy ?? vh / 2;
+        const crop = tk.crop || {}, cL = crop.left || 0, cT = crop.top || 0, cR = crop.right || 0, cB = crop.bottom || 0;
+        const ox = cL * vw, oy = cT * vh, sw = Math.max(1, vw * (1 - cL - cR)), sh = Math.max(1, vh * (1 - cT - cB));
+        let z = l.zoom ?? 1, cx = l.cx ?? ox + sw / 2, cy = l.cy ?? oy + sh / 2;
         if (l.follow) { const c = cursorAt(l.take, ct); if (c) { cx = c[0]; cy = c[1]; } }
         if (l.cam) {
           let a = l.cam[0], b = l.cam[l.cam.length - 1];
@@ -144,10 +148,16 @@ window.seek = async (t) => {
           if (st <= l.cam[0][0]) { a = b = l.cam[0]; }
           cx = mix(a[1], b[1]); cy = mix(a[2], b[2]); z = mix(a[3], b[3]);
         }
-        const K = Math.max(item.w / vw, item.h / vh) * z, iw = vw * K, ih = vh * K;
-        const left = clamp(item.w / 2 - cx * K, item.w - iw, 0), top = clamp(item.h / 2 - cy * K, item.h - ih, 0);
+        const K = Math.max(item.w / sw, item.h / sh) * z, iw = vw * K;
+        const left = clamp(item.w / 2 - cx * K, item.w - (ox + sw) * K, -ox * K), top = clamp(item.h / 2 - cy * K, item.h - (oy + sh) * K, -oy * K);
         item.img.style.width = iw + 'px'; item.img.style.left = left + 'px'; item.img.style.top = top + 'px';
         item.marks.forEach(({ o, m }) => { m.style.left = (left + o.x * K) + 'px'; m.style.top = (top + o.y * K) + 'px'; m.style.width = (o.w * K) + 'px'; m.style.height = (o.h * K) + 'px'; m.style.fontSize = ((o.size ?? 16) * K) + 'px'; m.style.paddingLeft = (6 * K) + 'px'; });
+        if (item.spot) {
+          const c = cursorAt(l.take, ct);
+          const sx = c ? left + c[0] * K : item.w / 2, sy = c ? top + c[1] * K : item.h / 2;
+          const rad = Math.max(item.w, item.h) * .42;
+          item.spot.style.background = 'radial-gradient(circle ' + rad + 'px at ' + sx + 'px ' + sy + 'px, rgba(0,0,0,0) 0%, rgba(0,0,0,.62) 100%)';
+        }
         const src = (S.takesPrefix || 'takes') + '/' + l.take + '/' + frameAt(l.take, ct);
         if (item.src !== src) { item.src = src; item.img.src = src; waits.push(item.img.decode().catch(() => {})); }
       } else if (l.type === 'text') {
@@ -243,7 +253,7 @@ export async function compose(spec, { playwright, mode = 'final', times = [], ba
   const takes = {};
   for (const name of new Set(drawn.scenes.flatMap((s) => s.layers.filter((l) => l.type === 'clip').map((l) => l.take)))) {
     const idx = JSON.parse(readFileSync(`${spec.takes}/${name}/index.json`));
-    takes[name] = { viewport: idx.viewport, frames: idx.frames, moves: idx.events.filter((e) => ['move', 'step', 'click', 'down'].includes(e.type)).map((e) => ({ t: e.t, x: e.x, y: e.y })), events: idx.events };
+    takes[name] = { viewport: idx.viewport, crop: idx.crop, frames: idx.frames, moves: idx.events.filter((e) => ['move', 'step', 'click', 'down'].includes(e.type)).map((e) => ({ t: e.t, x: e.x, y: e.y })), events: idx.events };
   }
   const pageFile = `${spec.out}/${drawn.id}-${drawn.format}-stage.html`;
   writeFileSync(pageFile, `<!doctype html><meta charset="utf-8">${drawn.pal.fontLink ? `<link rel="stylesheet" href="${drawn.pal.fontLink}">` : ''}<style>html,body{margin:0;width:${drawn.width}px;height:${drawn.height}px;overflow:hidden;background:${drawn.pal.bg}}#stage{position:absolute;inset:0;overflow:hidden}</style><div id="stage"></div><script>window.SPEC=${JSON.stringify(drawn)};window.TAKES=${JSON.stringify(takes)};</script><script>${RUNTIME}</script>`);

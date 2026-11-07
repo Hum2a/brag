@@ -8,13 +8,18 @@
 //   await take.click('button.go');
 //   await take.stop();
 //
-// Output: <outDir>/<name>/NNNNNN.jpg and index.json ({ frames: [{ f, t }], events: [...] }),
-// with times in seconds from take.start(). Pass an allow() filter so a take cannot reach backends,
-// analytics or third parties it does not need.
+// Output: <outDir>/<name>/NNNNNN.jpg and index.json
+// ({ viewport, scale, frames: [{ f, t }], events, crop? }).
+// A new recording sets each frame t to its index divided by 30 and quantizes event times
+// onto that grid. importTake builds the same folder from a video file. probeAudio returns
+// an audio file's duration and does not mix. Pass an allow() filter so a take cannot reach
+// backends, analytics or third parties it does not need.
 import { pathToFileURL } from 'node:url';
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { isAbsolute, join } from 'node:path';
+
+const FRAME_RATE = 30;
 
 export const VIEWPORTS = {
   landscape: { width: 1280, height: 720 },
@@ -36,6 +41,42 @@ export function writeContactSheet(takeDir, dest = join(takeDir, 'contact.jpg')) 
   execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-start_number', '0', '-i', join(sheetDir, '%02d.jpg'), '-frames:v', String(n), '-filter_complex', `tile=${cols}x${rows}:padding=6:color=0x111111`, dest]);
   rmSync(sheetDir, { recursive: true, force: true });
   return dest;
+}
+
+function probeJson(file, args) {
+  return JSON.parse(execFileSync('ffprobe', ['-v', 'error', ...args, '-of', 'json', file], { encoding: 'utf8' }));
+}
+
+function cropRecord(crop) {
+  if (!crop || typeof crop !== 'object') return null;
+  const side = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
+  return { top: side(crop.top), right: side(crop.right), bottom: side(crop.bottom), left: side(crop.left) };
+}
+
+function stampClock(frames, events) {
+  frames.forEach((frame, index) => { frame.t = index / FRAME_RATE; });
+  for (const event of events) event.t = Math.round(event.t * FRAME_RATE) / FRAME_RATE;
+}
+
+export function importTake(file, outDir, name) {
+  const dir = join(outDir, name);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const stream = probeJson(file, ['-select_streams', 'v:0', '-show_entries', 'stream=width,height']).streams?.[0];
+  const width = Number(stream?.width);
+  const height = Number(stream?.height);
+  if (!width || !height) throw new Error(`no video stream in ${file}`);
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-i', file, '-vf', `fps=${FRAME_RATE}`, '-q:v', '3', join(dir, '%06d.jpg')]);
+  const frames = readdirSync(dir).filter((entry) => entry.toLowerCase().endsWith('.jpg')).sort().map((f, index) => ({ f, t: index / FRAME_RATE }));
+  if (!frames.length) throw new Error(`no frames decoded from ${file}`);
+  writeFileSync(join(dir, 'index.json'), JSON.stringify({ viewport: { width, height }, scale: 1, frames, events: [] }));
+  return { frames: frames.length, duration: frames.at(-1)?.t ?? 0 };
+}
+
+export function probeAudio(file) {
+  const duration = Number(probeJson(file, ['-show_entries', 'format=duration']).format?.duration);
+  if (!Number.isFinite(duration)) throw new Error(`no duration for ${file}`);
+  return { duration };
 }
 
 const CURSOR = `
@@ -74,7 +115,7 @@ export async function openRecorder({ playwright, outDir, format = 'landscape', v
     close: () => browser.close(),
     format,
     viewport: vp,
-    async take(name, { allow } = {}) {
+    async take(name, { allow, crop } = {}) {
       const dir = `${outDir}/${name}`;
       mkdirSync(dir, { recursive: true });
       const context = await browser.newContext({ viewport: vp, deviceScaleFactor: scale });
@@ -85,13 +126,13 @@ export async function openRecorder({ playwright, outDir, format = 'landscape', v
       const frames = [], events = [];
       let t0 = 0, n = 0, x = vp.width / 2, y = vp.height / 2, on = false;
       const now = () => (Date.now() - t0) / 1000;
-      const mark = (type, extra = {}) => { if (on) events.push({ t: +now().toFixed(3), type, x: Math.round(x), y: Math.round(y), ...extra }); };
+      const mark = (type, extra = {}) => { if (on) events.push({ t: now(), type, x: Math.round(x), y: Math.round(y), ...extra }); };
       cdp.on('Page.screencastFrame', async ({ data, sessionId }) => {
         cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {});
         if (!on) return;
         n += 1;
         const f = `${String(n).padStart(6, '0')}.jpg`;
-        frames.push({ f, t: +now().toFixed(3) });
+        frames.push({ f, t: 0 });
         writeFileSync(`${dir}/${f}`, Buffer.from(data, 'base64'));
       });
       const take = {
@@ -106,7 +147,11 @@ export async function openRecorder({ playwright, outDir, format = 'landscape', v
           await page.waitForTimeout(300);
           on = false;
           await cdp.send('Page.stopScreencast').catch(() => {});
-          writeFileSync(`${dir}/index.json`, JSON.stringify({ viewport: vp, scale, frames, events }));
+          stampClock(frames, events);
+          const index = { viewport: vp, scale, frames, events };
+          const recordedCrop = cropRecord(crop);
+          if (recordedCrop) index.crop = recordedCrop;
+          writeFileSync(`${dir}/index.json`, JSON.stringify(index));
           await context.close();
           return { frames: frames.length, duration: frames.at(-1)?.t ?? 0 };
         },
