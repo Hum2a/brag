@@ -68,10 +68,10 @@ Write `brag-plan.md` and `spec.json` in the output directory. The plan is the ar
 
 - `cut`, `format`, `tone`, `duration`, `fps` (30), `poster` (a settled time, not a cut)
 - `pal`: `bg`, `fg`, `accent`, `font`, and `glow` when the tone uses blobs. `fg` on `bg` has to clear WCAG AA (4.5:1)
-- `captions`: `{ s, e, text }` for the muted read. A short label needs about 0.8s. A sentence needs about 0.3s per word. Kinetic headlines stay as text layers; a claim is one or the other
-- `endcard`: `name`, `line`, and `url` when the project has a URL or handle
-- `scenes`: contiguous from 0 to `duration`. Each layer is a `clip`, `image`, `text`, `count`, `bars`, `rect`, or `endcard`
-- Text and counts sit inside the safe area: 96px on landscape, 80px on square, 80px on the sides and 160px top and bottom on vertical
+- `captions`: `{ s, e, text }` for the muted read. A short label needs about 0.8s. A sentence needs about 0.3s per word. `style` is `plain` (default) or `pill`. `raise` adds pixels to the bottom inset. Wrap a word in asterisks (`*word*`) to draw it in `pal.accent`. The srt drops the asterisks and stays one cue per line. Kinetic headlines stay as text layers; a claim is one or the other
+- `endcard`: `name`, `line`, and `url` when the project has a URL or handle. A layer may set `mark` to a short string. The first 0.6s after `at` shows that mark large, then the name, the line, and the url. The line's readable hold starts after the sting
+- `scenes`: contiguous from 0 to `duration`. Each layer is a `clip`, `image`, `text`, `count`, `bars`, `rect`, `lower`, `sticker`, or `endcard`
+- Text, counts, lower thirds, and stickers sit inside the safe area: 96px on landscape, 80px on square, 80px on the sides and 160px top and bottom on vertical
 - At least one `clip` or `image`, unless you set `textOnly` because there is nothing to show
 - An `endcard` layer in the final scene, with enough hold to read the line
 - `music.off: true` when the user passed `--no-music`. `sfx: false` when they passed `--no-sfx`. Leave bpm, density, and the wipe to the tone. `prepareSpec` fills them in
@@ -86,6 +86,12 @@ Picture fields, when the cut needs them:
 - an image `cam` is `[[sceneTime, xFraction, yFraction, zoom], ...]`, fractions of the bitmap. With no `cam`, the image keeps its pop-in
 
 Text lines are `[text, accent?]` or a string. `accent: true` uses `pal.accent`.
+
+A text layer `exit` is seconds. `until` is the moment the line is gone. The exit starts at `until - exit` and reverses the opacity and the slide. `exit` defaults to 0, which hides the line at `until`. The readable hold still runs to `until`.
+
+A `lower` layer is `{ name, line, at, until? }`. It sits bottom-left in the safe area, above the burned caption. It enters in 0.25s and leaves in 0.25s, gone at `until` or the scene end. The readable hold ends when that exit starts.
+
+A `sticker` is `{ shape, text, x, y }` in stage pixels, not take pixels. `shape` is `arrow`, `pill`, or `step`. An arrow may set `point` to `[x, y]`. `step` shows the number in `text`. Stickers die with the scene. Clip `overlays` stay callouts on the picture.
 
 ## Creative laws
 
