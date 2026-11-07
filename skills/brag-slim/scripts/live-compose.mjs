@@ -83,7 +83,7 @@ const built = S.scenes.map((sc) => {
   return { sc, root, layers };
 });
 const shutter = el('div', 'position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:50', stage);
-const bands = [S.pal.accent, S.pal.fg, S.pal.bg].map((c) => el('div', 'position:absolute;top:-30%;height:160%;width:170%;background:' + c + ';transform:translateX(-140%) skewX(-16deg)', shutter));
+const bands = [S.pal.accent, S.pal.glow, S.pal.bg].map((c) => el('div', 'position:absolute;top:-30%;height:160%;width:170%;background:' + c + ';transform:translateX(-140%) skewX(-16deg)', shutter));
 
 window.seek = async (t) => {
   const beat = (t % .5) / .5, pulse = Math.pow(1 - beat, 3);
