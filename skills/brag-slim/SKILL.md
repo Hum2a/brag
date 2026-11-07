@@ -146,6 +146,14 @@ node <script-dir>/render.mjs <output-dir>/spec.json --pack
 
 `--stills` writes `work/contact.jpg`: a settled frame of every scene, and the midpoint of every cut. Look at it. Fix overflow, collisions, type outside the safe area, and a muddy cut. A plain crossfade between two busy layouts makes a double exposure; the tone's wipe already avoids that. Dip and fade go through the background. Do not render the full trailer until the contact sheet is clean.
 
+The same pass writes three reports:
+
+- `work/pacing.json` errors when the first caption and the first text layer both start after 2 seconds, and when a gap between consecutive captions is longer than 2.5 seconds. It warns when `music.drop` is set and no scene boundary is within 0.35 seconds of it. Errors fail the stills run after the contact sheet is written. Warnings print and do not fail.
+- `work/critique.json` gains a `motion` entry when a cut shows two scene roots one frame later, or the visible scene flips twice inside a tenth of a second. The check samples those cuts, not every frame.
+- `work/reroll.json` is `{ reused, reshot }` scene indexes from the scene-cache hit flags. The render prints both counts. A second run is the diff.
+
+A full render warns when the soundtrack wav peaks above 0.98. When a voice file is present, it compares ffmpeg `volumedetect` means and warns when the voice sits more than 8 dB below the bed. Those warnings do not fail the render.
+
 `--pack` reflows the same spec into the other two aspect ratios. It is opt-in because each pass screenshots every frame.
 
 ### Voice

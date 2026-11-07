@@ -348,3 +348,48 @@ export function validateSpec(spec) {
 
   return { ok: errors.length === 0, errors, warnings };
 }
+
+// Pacing only. The end-card hold already lives in validateSpec.
+export function critiqueSpec(spec) {
+  const errors = [];
+  const warnings = [];
+  if (!spec || typeof spec !== 'object') return { errors: ['spec is missing'], warnings };
+
+  const captions = [...(spec.captions ?? [])]
+    .filter((cap) => cap && typeof cap.s === 'number' && typeof cap.e === 'number')
+    .sort((a, b) => a.s - b.s || a.e - b.e);
+  let firstText = null;
+  for (const scene of spec.scenes ?? []) {
+    for (const layer of scene.layers ?? []) {
+      if (layer?.type !== 'text') continue;
+      const start = (scene.s ?? 0) + (layer.at ?? 0);
+      if (firstText == null || start < firstText) firstText = start;
+    }
+  }
+  const firstCaption = captions.length ? captions[0].s : null;
+  if ((firstCaption == null || firstCaption > 2) && (firstText == null || firstText > 2)) {
+    const captionAt = firstCaption == null ? 'missing' : `${firstCaption.toFixed(2)}s`;
+    const textAt = firstText == null ? 'missing' : `${firstText.toFixed(2)}s`;
+    errors.push(`the first caption (${captionAt}) and the first text layer (${textAt}) both start after 2 seconds`);
+  }
+
+  for (let i = 1; i < captions.length; i += 1) {
+    const gap = captions[i].s - captions[i - 1].e;
+    if (gap > 2.5) errors.push(`a ${gap.toFixed(2)}s gap between captions is longer than 2.5 seconds`);
+  }
+
+  if (spec.music && spec.music.drop != null) {
+    const drop = Number(spec.music.drop);
+    if (Number.isFinite(drop)) {
+      const bounds = [];
+      for (const scene of spec.scenes ?? []) {
+        if (typeof scene.s === 'number') bounds.push(scene.s);
+        if (typeof scene.e === 'number') bounds.push(scene.e);
+      }
+      const near = bounds.some((bound) => Math.abs(bound - drop) <= 0.35 + 1e-6);
+      if (!near) warnings.push(`music.drop at ${drop.toFixed(2)}s is not within 0.35s of a scene boundary`);
+    }
+  }
+
+  return { errors, warnings };
+}

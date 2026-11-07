@@ -9,6 +9,7 @@ import {
   DENSITIES,
   TONE_MUSIC,
   TONES,
+  critiqueSpec,
   prepareSpec,
   reflow,
   toSrt,
@@ -94,6 +95,28 @@ const square = validateSpec(prepareSpec(reflow(prepareSpec(goodSpec()), 'square'
 assert(square.ok, `square reflow failed: ${square.errors.join('; ')}`);
 
 assert(toSrt(valid ? prepareSpec(goodSpec()).captions : []).includes('Horse Tinder.'), 'srt should include caption text');
+
+const lateHook = prepareSpec(goodSpec());
+lateHook.captions = [
+  { s: 3, e: 6.5, text: 'Dating apps were built for humans.' },
+  { s: 6.5, e: 10.5, text: 'Swipe through eligible horses.' },
+  { s: 10.5, e: 15, text: 'Horse Tinder.' },
+];
+lateHook.scenes[0].layers[0].at = 3;
+const lateHookResult = critiqueSpec(lateHook);
+assert(
+  lateHookResult.errors.some((error) => error.includes('after 2 seconds')),
+  'a fixture whose first line starts at 3 seconds should fail critiqueSpec',
+);
+
+const covered = prepareSpec(goodSpec());
+covered.captions = [
+  { s: 0, e: 5, text: 'Dating apps were built for humans.' },
+  { s: 5, e: 10, text: 'Swipe through eligible horses.' },
+  { s: 10, e: 15, text: 'Horse Tinder.' },
+];
+const coveredResult = critiqueSpec(covered);
+assert(coveredResult.errors.length === 0, `a fixture with captions covering the cut should pass critiqueSpec: ${coveredResult.errors.join('; ')}`);
 
 assert(JSON.stringify(Object.keys(TONE_MUSIC).sort()) === JSON.stringify([...TONES].sort()), 'every tone needs a music preset');
 for (const preset of Object.values(TONE_MUSIC)) assert(DENSITIES.includes(preset.density), `unknown density ${preset.density}`);
