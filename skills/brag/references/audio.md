@@ -217,19 +217,31 @@ Scene 2 — Reveal — 3s
 
 ## Music
 
+### Generated bed (default pipeline)
+
+The default `/brag` path does not use the files below. `skills/brag-slim/scripts/live-sound.mjs` writes a bed from the tone: full, sparse, dry, dense, swell, or clean, on the same beat grid as the clicks and whooshes. The tone map lives in `skills/brag-slim/scripts/spec.mjs`.
+
+On `--full`, Hyperframes still uses a bundled track. Those tracks are one corporate-happy library. They fit `default`, `app-store`, and `launch`. They are a poor fit for `deadpan` and `cinematic`. For those two, generate a bed and drop the wav into the composition instead of forcing a Happy Beats track:
+
+```bash
+node --input-type=module -e "import { makeSoundtrack } from '<slim-script-dir>/live-sound.mjs'; import { TONE_MUSIC } from '<slim-script-dir>/spec.mjs'; makeSoundtrack({ duration: 20, music: { ...TONE_MUSIC.deadpan, drop: 4, end: 17.5 }, scenes: [{ s: 0, e: 20, wipe: 'cut', layers: [] }] }, {}, '<output-dir>/composition/assets/music/bed.wav')"
+```
+
+`<slim-script-dir>` is `skills/brag-slim/scripts/` in this repo, or the installed brag-slim skill's `scripts/` directory. Credit is not required for a generated bed. A bundled track still needs the ende.app credit in `assets/music/README.md`.
+
 ### Available tracks
 
-All tracks are "Happy Beats / Business Moves" by ende.app. Upbeat, clean, corporate-adjacent. Good across multiple tones.
+All tracks are "Happy Beats / Business Moves" by ende.app. Upbeat, clean, corporate-adjacent. Use them on `--full` when the tone can live with that feel.
 
 | Filename | Duration | Character | Best for |
 |---|---|---|---|
-| `happy-beats-business-moves-vol-1-by-ende-dot-app.mp3` | 2:44 | Full upbeat track, most energetic | `default`, `app-store` |
+| `happy-beats-business-moves-vol-1-by-ende-dot-app.mp3` | 2:44 | Full upbeat track, most energetic | `default`, `app-store`, `launch` |
 | `happy-beats-business-moves-vol-9-by-ende-dot-app.mp3` | 1:54 | Mid-energy, slightly more laid-back | `default`, `yc-parody` |
 | `happy-beats-business-moves-vol-10-by-ende-dot-app.mp3` | 1:00 | Compact loop, punchy | `default`, `chaotic` |
 | `happy-beats-business-moves-vol-11-by-ende-dot-app.mp3` | 1:28 | Warm and business-y | `yc-parody`, `app-store` |
-| `happy-beats-business-moves-vol-12-by-ende-dot-app.mp3` | 1:58 | Steady and clean | `polished`, `cinematic` |
+| `happy-beats-business-moves-vol-12-by-ende-dot-app.mp3` | 1:58 | Steady and clean | `polished`, `demo` |
 
-For `deadpan` tone: prefer vol-12 at very low volume (0.12-0.18). Skip music only if the plan explicitly chooses silence.
+For `deadpan` and `cinematic` on `--full`, use a generated bed. If you cannot generate one, vol-12 at 0.12–0.18 is the least-wrong bundled file, and the plan should say the bed is a compromise. Skip music only if the plan explicitly chooses silence.
 
 ### In a composition
 

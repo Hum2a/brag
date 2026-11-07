@@ -1,7 +1,7 @@
 {
   "name": "brag",
-  "version": "0.5.0",
-  "description": "Turn the current project into a short, polished, shareable launch video using Hyperframes.",
+  "version": "0.6.0",
+  "description": "Turn the current project into a short, polished, shareable launch trailer. Hyperframes remains available as /brag --full.",
   "author": {
     "name": "Shunit Haviv Hakimi",
     "email": "shunithaviv@gmail.com",

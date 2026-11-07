@@ -1,6 +1,6 @@
 ---
 name: brag
-description: Turn the current project website into a short, polished, shareable launch video using Hyperframes. Use when someone says "/brag", "let's brag about this", "make a launch video", "turn this into a video", or wants to share what they built. Reads the project code directly — no live URL or screenshots needed.
+description: Turn a project into a short, polished, shareable launch trailer. Use when someone says "/brag", "let's brag about this", "make a launch video", "turn this into a video", or wants to share what they built. The default path records the product and renders it with the bundled pipeline. "--full" keeps the Hyperframes workflow.
 ---
 
 # /brag
@@ -9,22 +9,11 @@ You built it. Now let's brag about it.
 
 ## Invocation dispatch (must happen first)
 
-**Model check.** If you are Claude Opus 5.5 and the invocation doesn't ask for the full workflow (`--full`, "use the full brag") or for voiceover (`--voice`, which brag-slim doesn't do), switch to brag-slim: read `<skill-dir>/slim.md` (the /brag-slim skill, bundled here) and follow it for the rest of this run instead of this file. Pass along the user's input, and pass any other options (`--no-music`, `--title`, …) as plain-language direction. Tell the user in one line first, e.g. "You're on Opus 5.5, so I'm using /brag-slim: I build the whole video myself. Say 'use the full brag' to switch back." If you are any other model, or can't tell which model you are, skip this check.
+The default is the trailer pipeline. Unless the invocation says `--full` or "use the full brag", read `<skill-dir>/slim.md` and follow that file for the rest of this run. Pass the user's input and the other options (`--tone`, `--format`, `--cut`, `--pack`, `--no-music`, `--no-sfx`, `--voice`, `--title`) through as plain language. Tell the user in one line that this run uses the trailer pipeline, and that `--full` is the Hyperframes path. Then stop reading this file.
 
-Before inspecting the project, parse the complete `/brag` invocation. If the
-invocation contains `--voice`, set `voice.enabled = true`. Enable narration
-only for that run. Do not enable narration automatically and do not fall back
-to the normal no-voice workflow.
+`--full` is the workflow below. It hands a composition brief to Hyperframes. Voice stays opt-in on both paths. On the pipeline, Kokoro is used only when `npx hyperframes tts` is available. On `--full`, Kokoro is the only provider, and there is no provider-selection logic.
 
-`/brag` turns the current project website or app into a short, polished, shareable launch video using Hyperframes. It is narrow, opinionated, and fun.
-
-## What this skill does
-
-1. Reads the current project code to understand the app.
-2. Plans a short brag concept specific to this project.
-3. Scripts and storyboards the video.
-4. Hands a focused composition brief to Hyperframes.
-5. Validates, renders, and writes share copy.
+`/brag --full` turns the current project website or app into a short, polished, shareable launch video using Hyperframes. It is narrow, opinionated, and fun.
 
 ## Parsing the invocation
 
@@ -43,7 +32,9 @@ Parse these options:
 |---|---|---|
 | `--tone` | preset or freeform description | inferred |
 | `--format` | `landscape`, `vertical`, `square` | `landscape` |
-| `--duration` | seconds | auto (15-25s) |
+| `--cut` | `hook` (6s), `social` (15s), `launch` (about 20s), `trailer` (35s) | pipeline only; `--full` stays 15–25s |
+| `--duration` | seconds | `--full`: auto (15-25s). Pipeline: use `--cut` |
+| `--pack` | flag | pipeline only; also renders the other two formats |
 | `--no-music` | flag | music on |
 | `--no-sfx` | flag | sfx on |
 | `--title` | string | inferred from project |
@@ -53,7 +44,7 @@ Voice is opt-in. If `--voice` is present, use Kokoro via Hyperframes and do
 not add any provider-selection logic. The voice workflow is intentionally
 single-provider.
 
-Tone can be a preset (`default`, `polished`, `yc-parody`, `chaotic`, `deadpan`, `cinematic`, `app-store`) or a creative direction such as "fake Series A launch from 2016", "museum exhibit", or "overproduced mobile game ad".
+Tone can be a preset (`default`, `polished`, `yc-parody`, `chaotic`, `deadpan`, `cinematic`, `app-store`, `demo`, `launch`) or a creative direction such as "fake Series A launch from 2016", "museum exhibit", or "overproduced mobile game ad".
 
 When the user gives freeform tone direction, map it to the nearest preset for pacing and structure, but preserve the user's direction in the plan and composition brief.
 
@@ -86,6 +77,16 @@ Generate the timestamp at the start of the run (`YYYY-MM-DD-HHmmss`) and use it 
 `<skill-dir>` is the directory containing this `SKILL.md`. Claude Code prints it as "Base directory for this skill" when the skill loads; for other agents it's wherever the skill was installed. Bundled assets are under `<skill-dir>/assets/` and scripts under `<skill-dir>/scripts/`. Don't guess an install path: a plugin install, a `~/.claude/skills/` copy, and this repo all put it somewhere different.
 
 ---
+
+## Full workflow (`--full`)
+
+The steps below are only for `--full`. The default run already left this file at the dispatch above.
+
+1. Reads the current project code to understand the app.
+2. Plans a short brag concept specific to this project.
+3. Scripts and storyboards the video.
+4. Hands a focused composition brief to Hyperframes.
+5. Validates, renders, and writes share copy.
 
 ## Step 1: Inspect the project
 
@@ -135,7 +136,7 @@ Validate, preview, render to `<output-dir>/brag.mp4`, pick the best poster frame
 
 ## Tone system
 
-Seven tone presets ship with `/brag`. Each changes scripting energy, pacing, typography personality, and transition style. Presets are defaults, not limits.
+Nine tone presets ship with `/brag`. Each changes scripting energy, pacing, typography personality, and transition style. Presets are defaults, not limits. The pipeline maps each one onto a wipe, a type entrance, and a generated bed. `--full` uses the same names.
 
 Full definitions: [references/tones.md](references/tones.md)
 
@@ -148,6 +149,8 @@ Full definitions: [references/tones.md](references/tones.md)
 | `deadpan` | Calm, dry, understated | The joke is that nothing is a joke |
 | `cinematic` | Dramatic, trailer-scale | Big motion, bigger claims |
 | `app-store` | Smooth, feature-card clean | Corporate but not boring |
+| `demo` | The product is the picture | Captions, hard cuts, little type |
+| `launch` | Something just shipped | One feature, then where to get it |
 
 Always allow a freeform creative direction to refine or override the preset.
 

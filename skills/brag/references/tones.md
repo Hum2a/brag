@@ -1,6 +1,6 @@
 # Tone reference
 
-Seven tones. Each changes scripting energy, pacing, typography personality, and transition style.
+Nine tones. Each changes scripting energy, pacing, typography personality, and transition style. The default pipeline maps a tone onto a wipe, a type entrance, a background, and a generated music bed (`skills/brag-slim/scripts/spec.mjs`). `--full` uses the same names with Hyperframes.
 
 ---
 
@@ -229,3 +229,83 @@ All chatbot models welcome.
 **Transitions:** Clean slide or wipe (0.35-0.45s). Nothing dramatic.
 
 **When to use:** Products that benefit from being taken seriously as a product, even if absurd. Good for anything B2B-parody or therapy/wellness adjacent.
+
+---
+
+## `demo`
+
+**Energy:** The product is the picture. Type stays out of the way.
+
+**Voice:** Almost none. A caption can carry a claim the picture does not.
+
+**Typography:** Small, settled, inside the safe area. No slam, no stacked headlines.
+
+**Pacing:** 3–5 scenes. The recording is the scene. Holds are long enough to see the action finish.
+
+**Hook style:** The product, already doing the thing. One caption.
+```
+Open the inbox.
+```
+
+**Highlight style:** The next real action, then its result. No feature cards.
+
+**Outro style:** Name, and where to get it, small.
+```
+Horse Tinder
+horse.example
+```
+
+**Transitions:** Hard cut.
+
+**When to use:** A working UI that is more interesting than anything you could write over it. Screen recordings, editors, dashboards, playable demos.
+
+---
+
+## `launch`
+
+**Energy:** Something just shipped. One version, one feature, then where to get it.
+
+**Voice:** Direct. Present tense. The date or the version is allowed when the project actually has one.
+
+**Typography:** Masked type. One claim per scene. The end card is the largest type in the trailer.
+
+**Pacing:** 4–5 scenes. The last one is the end card and it holds.
+
+**Hook style:** The thing that shipped, stated as a fact.
+```
+Matching is live.
+```
+
+**Highlight style:** One new capability, shown in the product, then named.
+```
+Stablemates in your pasture.
+```
+
+**Outro style:** Name, one line, URL or handle.
+```
+Horse Tinder
+Find your stablemate.
+horse.example
+```
+
+**Transitions:** Dip through the background.
+
+**When to use:** A release, a version, a feature the user pointed at. The end card is the point of the cut.
+
+---
+
+## Pipeline motion and music
+
+The default `/brag` path does not score the trailer with the bundled Happy Beats tracks. `prepareSpec` in `skills/brag-slim/scripts/spec.mjs` fills the wipe, the type entrance, the background, and the bed from the tone. `live-sound.mjs` plays that bed on one beat grid. `--full` still uses the bundled tracks; for `deadpan` and `cinematic`, prefer a generated bed over those tracks. See `references/audio.md`.
+
+| Tone | Wipe | Type | Background | Bed |
+|---|---|---|---|---|
+| `default` | shutter | slam | blobs | full |
+| `polished` | dip | mask | flat | sparse |
+| `yc-parody` | cut | words | flat | dry |
+| `chaotic` | shutter | slam | blobs | dense |
+| `deadpan` | cut | words | flat | sparse, quiet |
+| `cinematic` | fade | mask | blobs | swell |
+| `app-store` | dip | mask | flat | clean |
+| `demo` | cut | words | flat | sparse |
+| `launch` | dip | mask | flat | clean |

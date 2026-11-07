@@ -27,12 +27,20 @@ cp -r skills/brag/ ~/.your-agent/skills/brag/
 Antigravity natively discovers skills without manual pasting:
 - **Project-level**: Symlink or copy `skills/brag/` to `.agents/skills/brag/` (or declare in `.agents/skills.json`).
 - **Global-level**: Copy `skills/brag/` to `~/.gemini/config/skills/brag/` to make `/brag` accessible across all your projects.
-- **Hyperframes companion skills**: Run `npx hyperframes skills` to ensure Hyperframes helper skills are installed to `~/.agents/skills` / `~/.gemini/config/skills`.
+- **Hyperframes companion skills** (only for `/brag --full`): Run `npx hyperframes skills` to install them to `~/.agents/skills` / `~/.gemini/config/skills`.
 
 ## Prerequisites
 
-Regardless of method, the environment needs:
+The default trailer needs:
+
 - **Node.js 22+**
 - **FFmpeg** on `PATH`
-- **Hyperframes CLI** — `npx hyperframes doctor` to verify
-- **This repo cloned** (or `skills/brag/` accessible) for assets (music, SFX, reference docs)
+- **Chrome**
+- **Playwright**, so a take can be recorded
+
+`/brag --full` and Kokoro voiceover also need:
+
+- **Hyperframes CLI** — `npx hyperframes doctor`
+- **This repo cloned** (or `skills/brag/` accessible) for the bundled music, SFX, and reference docs
+
+The pipeline scripts ship in `skills/brag-slim/scripts/`. Install that skill next to `/brag`, or install the plugin, which includes both.

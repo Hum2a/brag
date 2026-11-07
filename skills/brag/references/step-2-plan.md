@@ -110,6 +110,8 @@ But adapt it. These are the right scene counts for each tone:
 | `deadpan` | 3-4 | Long holds. Big empty space. One word at a time. |
 | `cinematic` | 4-5 | Wide shots. Big type. Dramatic reveals. |
 | `app-store` | 4-6 | Feature cards. Clean reveals. No mess. |
+| `demo` | 3-5 | The recording is the scene. Type stays a caption. |
+| `launch` | 4-5 | One shipped claim per scene. The last scene is the end card. |
 
 ## Duration guidance
 
@@ -231,4 +233,6 @@ Match transitions to tone:
 | `deadpan` | Slow crossfade, long hold |
 | `cinematic` | Dramatic wipe, crossfade |
 | `app-store` | Slide, smooth wipe |
+| `demo` | Hard cut |
+| `launch` | Dip through the background |
 

@@ -12,8 +12,31 @@
 // with times in seconds from take.start(). Pass an allow() filter so a take cannot reach backends,
 // analytics or third parties it does not need.
 import { pathToFileURL } from 'node:url';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { isAbsolute, join } from 'node:path';
+
+export const VIEWPORTS = {
+  landscape: { width: 1280, height: 720 },
+  vertical: { width: 540, height: 960 },
+  square: { width: 720, height: 720 },
+};
+
+export function writeContactSheet(takeDir, dest = join(takeDir, 'contact.jpg')) {
+  const idx = JSON.parse(readFileSync(join(takeDir, 'index.json'), 'utf8'));
+  const frames = idx.frames ?? [];
+  if (!frames.length) return null;
+  const n = Math.min(12, frames.length);
+  const picks = Array.from({ length: n }, (_, i) => frames[Math.min(frames.length - 1, Math.round((i * (frames.length - 1)) / Math.max(1, n - 1)))]);
+  const sheetDir = join(takeDir, '_sheet');
+  mkdirSync(sheetDir, { recursive: true });
+  picks.forEach((frame, i) => copyFileSync(join(takeDir, frame.f), join(sheetDir, `${String(i).padStart(2, '0')}.jpg`)));
+  const cols = Math.min(4, n);
+  const rows = Math.ceil(n / cols);
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-start_number', '0', '-i', join(sheetDir, '%02d.jpg'), '-frames:v', String(n), '-filter_complex', `tile=${cols}x${rows}:padding=6:color=0x111111`, dest]);
+  rmSync(sheetDir, { recursive: true, force: true });
+  return dest;
+}
 
 const CURSOR = `
 (() => {
@@ -42,22 +65,25 @@ const CURSOR = `
 
 const smooth = (x) => x * x * (3 - 2 * x);
 
-export async function openRecorder({ playwright, outDir, viewport = { width: 1280, height: 720 }, scale = 2, channel = 'chrome' }) {
+export async function openRecorder({ playwright, outDir, format = 'landscape', viewport, scale = 2, channel = 'chrome' }) {
+  const vp = viewport ?? VIEWPORTS[format] ?? VIEWPORTS.landscape;
   const url = isAbsolute(playwright) ? pathToFileURL(playwright).href : playwright;
   const { chromium } = await import(url);
   const browser = await chromium.launch({ channel, headless: true });
   return {
     close: () => browser.close(),
+    format,
+    viewport: vp,
     async take(name, { allow } = {}) {
       const dir = `${outDir}/${name}`;
       mkdirSync(dir, { recursive: true });
-      const context = await browser.newContext({ viewport, deviceScaleFactor: scale });
+      const context = await browser.newContext({ viewport: vp, deviceScaleFactor: scale });
       if (allow) await context.route('**/*', (route) => (allow(new URL(route.request().url())) ? route.continue() : route.abort()));
       await context.addInitScript(CURSOR);
       const page = await context.newPage();
       const cdp = await context.newCDPSession(page);
       const frames = [], events = [];
-      let t0 = 0, n = 0, x = viewport.width / 2, y = viewport.height / 2, on = false;
+      let t0 = 0, n = 0, x = vp.width / 2, y = vp.height / 2, on = false;
       const now = () => (Date.now() - t0) / 1000;
       const mark = (type, extra = {}) => { if (on) events.push({ t: +now().toFixed(3), type, x: Math.round(x), y: Math.round(y), ...extra }); };
       cdp.on('Page.screencastFrame', async ({ data, sessionId }) => {
@@ -73,14 +99,14 @@ export async function openRecorder({ playwright, outDir, viewport = { width: 128
         async start() {
           t0 = Date.now();
           on = true;
-          await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 88, maxWidth: viewport.width * scale, maxHeight: viewport.height * scale, everyNthFrame: 1 });
+          await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 88, maxWidth: vp.width * scale, maxHeight: vp.height * scale, everyNthFrame: 1 });
           await page.mouse.move(x, y);
         },
         async stop() {
           await page.waitForTimeout(300);
           on = false;
           await cdp.send('Page.stopScreencast').catch(() => {});
-          writeFileSync(`${dir}/index.json`, JSON.stringify({ viewport, scale, frames, events }));
+          writeFileSync(`${dir}/index.json`, JSON.stringify({ viewport: vp, scale, frames, events }));
           await context.close();
           return { frames: frames.length, duration: frames.at(-1)?.t ?? 0 };
         },

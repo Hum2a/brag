@@ -6,7 +6,7 @@
 
 [![the /brag launch site — you built it, now brag](docs/assets/hero.png)](https://latent-spaces.github.io/brag/)
 
-`/brag` is an agent skill that turns the project you created into a short, shareable launch video — music, motion, and share copy included. One command, powered by [Hyperframes](https://hyperframes.heygen.com/).
+`/brag` is an agent skill that turns the project you created into a short, shareable launch trailer — a recording of the product, music, captions, and share copy. One command. Hyperframes is still there as `/brag --full`.
 
 The looping video on the [launch site](https://latent-spaces.github.io/brag/) was made by `/brag` on this very repo. 
 
@@ -18,15 +18,11 @@ The skill stays free and open source. Install it below and run it yourself anyti
 
 ## New: `/brag-slim`
 
-**The same /brag, rebuilt lean for Opus 5.5.**
+**The trailer pipeline, and the path `/brag` uses by default.**
 
-A smooth launch video, designed for your specific project, with its own soundtrack and share copy.
+A recording of the product, cut and scored by the scripts in this repo, with captions and share copy. Hyperframes is not required.
 
-No Hyperframes, no bundled assets, same creative rules.
-
-Just tell Opus 5.5: *let's /brag about this.*
-
-On Opus 5.5, `/brag` switches to `/brag-slim` automatically. Run `/brag --full` to keep the classic Hyperframes workflow.
+On every model, `/brag` uses this pipeline. Run `/brag --full` for the Hyperframes workflow.
 
 **Install just `/brag-slim`:**
 
@@ -34,7 +30,7 @@ On Opus 5.5, `/brag` switches to `/brag-slim` automatically. Run `/brag --full` 
 npx skills add https://github.com/latent-spaces/brag --skill brag-slim
 ```
 
-Already have the Claude Code `/brag` plugin? `/brag-slim` is included from version 0.4.0. Run `claude plugin update brag` to get it.
+Already have the Claude Code `/brag` plugin? `/brag-slim` has shipped with it since 0.4.0. Version 0.6.0 makes the pipeline the default. Run `claude plugin update brag`.
 
 ## Install /brag
 
@@ -114,25 +110,27 @@ Voiceover is off by default. Enable it explicitly with:
 /brag --voice
 ```
 
-Narration uses Kokoro through Hyperframes when enabled.
+Narration is off unless you pass `--voice`. It uses Kokoro when `npx hyperframes tts` is available. The trailer still has to work with the sound off.
 
-You get a `brag-output/` folder with the plan, a composition brief, share copy, and the rendered `brag.mp4`.
+You get a `brag-output/` folder with the plan, `spec.json`, share copy, captions, a poster, and `brag.mp4`. `--pack` also writes the vertical and square cuts. `--full` still writes a Hyperframes composition instead of `spec.json`.
 
 ## How it works
 
-`/brag` owns the story — the product angle, tone, and which moments to show. It hands a focused brief to [Hyperframes](https://hyperframes.heygen.com/), which builds, times, and renders the video.
+`/brag` owns the story: the product angle, the tone, and which moments to show. It writes a `spec.json`. The scripts record a browser session when the product can be driven, then cut, score, caption, and render the trailer. `/brag --full` hands the same kind of brief to [Hyperframes](https://hyperframes.heygen.com/) instead.
 
 ## Requirements
 
-- An agent that supports Agent Skills — Claude Code, opencode, Codex CLI, or any agent with custom instructions (see "Also works with" above)
+- An agent that supports Agent Skills — Claude Code, Cursor, opencode, Codex CLI, or any agent with custom instructions (see "Also works with" above)
 - Node.js 22+
 - FFmpeg on `PATH`
-- Hyperframes CLI — `npx hyperframes` (check it with `npx hyperframes doctor`)
+- Chrome, for a recorded take
+- Playwright, so the recorder can drive the page (`npm install playwright` in the project, or pass a path to an install you already have)
+- Hyperframes CLI — only for `/brag --full`, and for `/brag --voice` when you want Kokoro narration (`npx hyperframes doctor`)
 
 ## What's in this repo
 
-- `skills/brag/` — the skill, references, and bundled music + SFX
-- `skills/brag-slim/` — `/brag-slim`, the single-file skill for Claude Opus 5.5
+- `skills/brag/` — the `/brag` skill. The default run follows the bundled `slim.md`
+- `skills/brag-slim/` — the trailer pipeline: the skill, plus `scripts/` (`spec.mjs`, `render.mjs`, capture, compose, sound)
 - `examples/` — fake product sites used as a benchmark suite
 - `docs/` — the launch site (GitHub Pages)
 - `plugin.json` — portable Agent Plugins manifest
@@ -144,9 +142,10 @@ You get a `brag-output/` folder with the plan, a composition brief, share copy, 
 
 ## Credits
 
-- Music — [ende.app](https://ende.app/en) "Happy Beats / Business Moves" (CC BY 4.0)
-- Sound effects — [Kenney](https://kenney.nl/)
-- Video generation — [Hyperframes](https://hyperframes.heygen.com/)
+- Default soundtrack — generated in this repo, one bed per tone
+- Music on `/brag --full` — [ende.app](https://ende.app/en) "Happy Beats / Business Moves" (CC BY 4.0)
+- Sound effects on `/brag --full` — [Kenney](https://kenney.nl/)
+- `/brag --full` — [Hyperframes](https://hyperframes.heygen.com/)
 - Fake demo sites — built with [Impeccable](https://impeccable.style/)
 
 ## Contributing
