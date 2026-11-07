@@ -10,7 +10,7 @@ import { mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync } from 'no
 import { execFileSync } from 'node:child_process';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { makeSoundtrack } from './live-sound.mjs';
-import { FORMATS } from './spec.mjs';
+import { FORMATS, loopHoldPad } from './spec.mjs';
 
 const RUNTIME = String.raw`
 const S = window.SPEC, T = window.TAKES;
@@ -91,7 +91,13 @@ const built = S.scenes.map((sc) => {
       line.textContent = l.line || card.line || '';
       const url = el('div', 'font:700 ' + Math.round(H * .026) + 'px/1.2 ' + S.pal.font + ';letter-spacing:.01em;color:' + S.pal.accent + ';margin-top:.4em', node);
       url.textContent = l.url || card.url || '';
-      return { l, node, name, line, url };
+      let credit = null;
+      const creditText = (S.music && S.music.credit) || '';
+      if (creditText) {
+        credit = el('div', 'position:absolute;left:0;right:0;bottom:0;font:500 ' + Math.round(H * .016) + 'px/1.3 ' + S.pal.font + ';letter-spacing:.01em;color:' + S.pal.fg + ';opacity:0', node);
+        credit.textContent = creditText;
+      }
+      return { l, node, name, line, url, credit };
     }
     const node = el('div', 'position:absolute;left:' + l.x + 'px;top:' + l.y + 'px;width:' + l.w + 'px;height:' + l.h + 'px;border-radius:' + (l.radius ?? 0) + 'px;background:' + l.fill, root);
     return { l, node };
@@ -99,12 +105,13 @@ const built = S.scenes.map((sc) => {
   return { sc, root, layers };
 });
 const scrim = el('div', 'position:absolute;left:0;right:0;bottom:0;z-index:39;pointer-events:none;background:linear-gradient(transparent, ' + S.pal.bg + ')', stage);
-scrim.style.height = Math.round(MY * 2.1) + 'px';
 const cap = el('div', 'position:absolute;z-index:40;text-align:center;font-weight:700;letter-spacing:-.02em;line-height:1.15;text-wrap:balance;color:' + S.pal.fg + ';font-family:' + S.pal.font + ';text-shadow:0 2px 18px rgba(0,0,0,.45)', stage);
+cap.raise = (S.caption && +S.caption.raise) || 0;
 cap.style.left = M + 'px';
 cap.style.right = M + 'px';
-cap.style.bottom = MY + 'px';
+cap.style.bottom = (MY + cap.raise) + 'px';
 cap.style.fontSize = Math.round(H * .037) + 'px';
+scrim.style.height = Math.round(MY * 2.1 + cap.raise) + 'px';
 const veil = el('div', 'position:absolute;inset:0;z-index:45;pointer-events:none;background:' + S.pal.bg + ';opacity:0', stage);
 const shutter = el('div', 'position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:50', stage);
 const bands = [S.pal.accent, S.pal.glow || S.pal.accent, S.pal.bg].map((c) => el('div', 'position:absolute;top:-30%;height:160%;width:170%;background:' + c + ';transform:translateX(-140%) skewX(-16deg)', shutter));
@@ -169,6 +176,10 @@ window.seek = async (t) => {
         const p = out3((st - at) / .45);
         node.style.opacity = st >= at ? 1 : 0;
         node.style.transform = 'translateY(' + (1 - p) * 36 + 'px)';
+        if (item.credit) {
+          const last = built[built.length - 1].sc;
+          item.credit.style.opacity = (sc === last && t >= last.e - 2) ? '.72' : '0';
+        }
       } else if (l.type === 'count') {
         const k = out3((st - at) / (l.dur ?? 1.2));
         node.style.opacity = st >= at ? 1 : 0;
@@ -190,8 +201,9 @@ window.seek = async (t) => {
     }
   }
   let shown = null;
+  const burn = S.burnCaptions !== false;
   for (const c of S.captions || []) if (t >= c.s && t < c.e) shown = c;
-  if (!shown) { cap.style.opacity = 0; scrim.style.opacity = 0; }
+  if (!burn || !shown) { cap.style.opacity = 0; scrim.style.opacity = 0; }
   else { cap.style.opacity = clamp((t - shown.s) / .12); scrim.style.opacity = cap.style.opacity; cap.textContent = shown.text; }
   let dip = 0;
   for (const { sc } of built) {
@@ -215,6 +227,59 @@ window.ready = Promise.all([...new Set([700, 800].map((w) => document.fonts.load
 
 const fileUrl = (p) => pathToFileURL(p).href;
 
+function escapeMeta(value) {
+  return String(value).replace(/\\/g, '\\\\').replace(/\n/g, '\\\n').replace(/([=;#])/g, '\\$1');
+}
+
+function markerTime(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (value && typeof value === 'object') {
+    const time = value.t ?? value.time ?? value.start;
+    if (typeof time === 'number' && Number.isFinite(time)) return time;
+  }
+  return null;
+}
+
+function chapterCues(markers, duration) {
+  if (!markers || typeof markers !== 'object') return [];
+  const span = Math.max(0, duration);
+  const raw = Array.isArray(markers)
+    ? markers.map((entry) => {
+      const time = markerTime(entry);
+      const title = entry && (entry.title || entry.name);
+      return time == null || !title ? null : { t: time, title: String(title) };
+    })
+    : Object.entries(markers).map(([key, value]) => {
+      const time = markerTime(value);
+      if (time == null) return null;
+      const title = value && typeof value === 'object' && (value.title || value.name) ? String(value.title || value.name) : key;
+      return { t: time, title };
+    });
+  const points = raw.filter(Boolean)
+    .map((entry) => ({ ...entry, t: Math.min(span, Math.max(0, entry.t)) }))
+    .sort((a, b) => a.t - b.t);
+  const chapters = [];
+  for (let i = 0; i < points.length; i += 1) {
+    const start = Math.round(points[i].t * 1000);
+    const end = Math.round((i + 1 < points.length ? points[i + 1].t : span) * 1000);
+    if (end <= start) continue;
+    chapters.push({ start, end, title: points[i].title });
+  }
+  return chapters;
+}
+
+function writeFfmetadata(spec, duration, file) {
+  const lines = [';FFMETADATA1'];
+  if (typeof spec.title === 'string' && spec.title.trim()) lines.push(`title=${escapeMeta(spec.title.trim())}`);
+  if (typeof spec.endcard?.url === 'string' && spec.endcard.url.trim()) lines.push(`comment=${escapeMeta(spec.endcard.url.trim())}`);
+  for (const chapter of chapterCues(spec.markers, duration)) {
+    lines.push('[CHAPTER]', 'TIMEBASE=1/1000', `START=${chapter.start}`, `END=${chapter.end}`, `title=${escapeMeta(chapter.title)}`);
+  }
+  if (lines.length === 1) return false;
+  writeFileSync(file, `${lines.join('\n')}\n`);
+  return true;
+}
+
 function pageSpec(spec) {
   const stage = FORMATS[spec.format] ?? FORMATS.landscape;
   const copy = structuredClone(spec);
@@ -223,6 +288,8 @@ function pageSpec(spec) {
   copy.margin = spec.margin ?? stage.margin;
   copy.marginY = spec.marginY ?? stage.marginY;
   copy.background = spec.background ?? 'blobs';
+  const raise = Number(spec.caption?.raise);
+  copy.caption = { ...(spec.caption && typeof spec.caption === 'object' ? spec.caption : {}), raise: Number.isFinite(raise) ? raise : 0 };
   copy.takesPrefix = spec.out && spec.takes ? relative(spec.out, spec.takes).replaceAll('\\', '/') || '.' : 'takes';
   const root = spec.out ?? '.';
   for (const scene of copy.scenes ?? []) {
@@ -276,7 +343,18 @@ export async function compose(spec, { playwright, mode = 'final', times = [], ba
   copyFileSync(`${work}/frames/${String(posterFrame).padStart(5, '0')}.jpg`, `${spec.out}/${base}.jpg`);
   copyFileSync(`${work}/frames/${String(posterFrame).padStart(5, '0')}.jpg`, `${work}/frames/00000.jpg`);
   makeSoundtrack(spec, takes, `${work}/music.wav`);
-  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-framerate', String(fps), '-i', `${work}/frames/%05d.jpg`, '-i', `${work}/music.wav`, '-c:v', 'libx264', '-crf', '17', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '224k', '-movflags', '+faststart', '-t', String(spec.duration), `${spec.out}/${base}.mp4`]);
+  const pad = loopHoldPad(spec);
+  if (spec.loopHold === true && pad === 0) console.warn('warning: loopHold skipped because the hold would pass 35.5s');
+  const duration = spec.duration + pad;
+  const meta = `${work}/ffmetadata.txt`;
+  const hasMeta = writeFfmetadata(spec, duration, meta);
+  const encode = ['-y', '-loglevel', 'error', '-framerate', String(fps), '-i', `${work}/frames/%05d.jpg`, '-i', `${work}/music.wav`];
+  if (hasMeta) encode.push('-f', 'ffmetadata', '-i', meta);
+  if (pad > 0) encode.push('-vf', `tpad=stop_mode=clone:stop_duration=${pad}`, '-af', `apad=pad_dur=${pad}`);
+  encode.push('-c:v', 'libx264', '-crf', '17', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '224k');
+  if (hasMeta) encode.push('-map', '0:v:0', '-map', '1:a:0', '-map_metadata', '2', '-map_chapters', '2');
+  encode.push('-movflags', '+faststart', '-t', String(duration), `${spec.out}/${base}.mp4`);
+  execFileSync('ffmpeg', encode);
   rmSync(`${work}/frames`, { recursive: true, force: true });
   return { video: `${spec.out}/${base}.mp4`, poster: `${spec.out}/${base}.jpg` };
 }

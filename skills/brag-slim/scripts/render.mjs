@@ -3,29 +3,47 @@
 //   node render.mjs spec.json --stills
 //   node render.mjs spec.json
 //   node render.mjs spec.json --pack
+//   node render.mjs spec.json --gif --webm --thumbs
+//   node render.mjs spec.json --platform reels
 //   node render.mjs spec.json --playwright path/to/playwright
 //
 // --stills validates, shoots a settled frame of every scene plus each cut, and writes work/contact.jpg.
 // A full run writes brag.mp4, bakes the poster as frame 0, writes brag.jpg and brag.srt, and mixes
 // voiceover.wav when one is sitting next to the spec. --pack also renders the other two formats.
-import { execFileSync } from 'node:child_process';
+// --platform reels|tiktok, on a vertical master, writes a 1080x1920 encode with captions raised
+// and loudness at -14 LUFS. --gif and --webm cut a silent hook on a beat at or under 6s.
+// --thumbs writes two stills and does not draw text.
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { compose } from './live-compose.mjs';
-import { FORMATS, prepareSpec, reflow, stillTimes, toSrt, validateSpec } from './spec.mjs';
+import { FORMATS, loopHoldPad, platformPreset, prepareSpec, reflow, stillTimes, thumbTimes, toSrt, trimPoint, validateSpec } from './spec.mjs';
 
 const require = createRequire(import.meta.url);
 
 function parseArgs(argv) {
   let spec = null;
   let playwright = null;
+  let platform = null;
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--playwright') { playwright = argv[i + 1] ?? null; i += 1; continue; }
+    if (argv[i] === '--platform') { platform = argv[i + 1] ?? null; i += 1; continue; }
     if (argv[i].startsWith('--')) continue;
     spec = argv[i];
   }
-  return { spec, playwright, stills: argv.includes('--stills'), pack: argv.includes('--pack') };
+  return {
+    spec,
+    playwright,
+    platform,
+    stills: argv.includes('--stills'),
+    pack: argv.includes('--pack'),
+    gif: argv.includes('--gif'),
+    webm: argv.includes('--webm'),
+    thumbs: argv.includes('--thumbs'),
+    askedPlatform: argv.includes('--platform'),
+  };
 }
 
 function findPlaywright(flag) {
@@ -49,11 +67,77 @@ function mixVoice(video, voice) {
     '-i', video, '-i', voice,
     '-filter_complex', '[0:a]volume=0.2[m];[1:a]volume=1[v];[m][v]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]',
     '-map', '0:v', '-map', '[a]',
+    '-map_metadata', '0', '-map_chapters', '0',
     '-c:v', 'copy', '-c:a', 'aac', '-b:a', '224k', '-movflags', '+faststart',
     tmp,
   ]);
   rmSync(video);
   renameSync(tmp, video);
+}
+
+function measureLoudnorm(video) {
+  const run = spawnSync('ffmpeg', [
+    '-hide_banner', '-i', video,
+    '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11:print_format=json',
+    '-f', 'null', '-',
+  ], { encoding: 'utf8' });
+  const text = `${run.stdout ?? ''}\n${run.stderr ?? ''}`;
+  const start = text.lastIndexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end < start) return null;
+  try { return JSON.parse(text.slice(start, end + 1)); } catch { return null; }
+}
+
+function loudnormFilter(measured, seconds) {
+  const cap = Number.isFinite(seconds) ? `,atrim=end=${seconds},asetpts=PTS-STARTPTS` : '';
+  if (!measured || !Number.isFinite(Number(measured.input_i))) return `loudnorm=I=-14:TP=-1.5:LRA=11${cap}`;
+  return `loudnorm=I=-14:TP=-1.5:LRA=11:measured_I=${measured.input_i}:measured_TP=${measured.input_tp}:measured_LRA=${measured.input_lra}:measured_thresh=${measured.input_thresh}:offset=${measured.target_offset}:linear=true${cap}`;
+}
+
+function mediaDuration(file) {
+  try {
+    const out = execFileSync('ffprobe', [
+      '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file,
+    ], { encoding: 'utf8' }).trim();
+    const seconds = Number(out);
+    return Number.isFinite(seconds) ? seconds : null;
+  } catch {
+    return null;
+  }
+}
+
+function soundMixAlreadyNormalized() {
+  try {
+    const src = readFileSync(fileURLToPath(new URL('./live-sound.mjs', import.meta.url)), 'utf8');
+    return src.includes('loudnorm');
+  } catch {
+    return false;
+  }
+}
+
+// This encode only, and only when the soundtrack itself is not already loudness-normalized.
+// The picture stream is copied so the length stays the picture's length.
+function normalizeLoudness(video, seconds) {
+  const tmp = video.replace(/\.mp4$/i, '.loud.mp4');
+  const end = mediaDuration(video) ?? seconds;
+  try {
+    execFileSync('ffmpeg', [
+      '-y', '-loglevel', 'error',
+      '-i', video,
+      '-map', '0:v:0', '-map', '0:a:0',
+      '-map_metadata', '0', '-map_chapters', '0',
+      '-c:v', 'copy',
+      '-af', loudnormFilter(measureLoudnorm(video), end),
+      '-c:a', 'aac', '-b:a', '224k',
+      '-movflags', '+faststart',
+      tmp,
+    ]);
+    rmSync(video);
+    renameSync(tmp, video);
+  } catch (error) {
+    if (existsSync(tmp)) rmSync(tmp, { force: true });
+    console.warn(`warning: loudnorm failed (${error instanceof Error ? error.message : error}); left the platform encode at its mixed level`);
+  }
 }
 
 function tile(dir, count, dest) {
@@ -86,7 +170,7 @@ function report(result) {
   }
 }
 
-async function renderOne(spec, { playwright, stills, base }) {
+async function renderOne(spec, { playwright, stills, base, loudnorm = false }) {
   mkdirSync(spec.out, { recursive: true });
   if (stills) {
     const times = stillTimes(spec);
@@ -97,15 +181,65 @@ async function renderOne(spec, { playwright, stills, base }) {
     return;
   }
   await compose(spec, { playwright, mode: 'final', base });
+  const video = join(spec.out, `${base}.mp4`);
   const voice = findVoice(spec.out);
-  if (voice) mixVoice(join(spec.out, `${base}.mp4`), voice);
+  if (voice) mixVoice(video, voice);
+  if (loudnorm && !soundMixAlreadyNormalized()) normalizeLoudness(video, spec.duration + loopHoldPad(spec));
   if (base === 'brag') writeFileSync(join(spec.out, 'brag.srt'), toSrt(spec.captions));
-  console.log(`video: ${join(spec.out, `${base}.mp4`)}`);
+  console.log(`video: ${video}`);
+}
+
+function grabStill(video, time, dest) {
+  execFileSync('ffmpeg', [
+    '-y', '-loglevel', 'error',
+    '-i', video,
+    '-ss', String(Math.max(0, time)),
+    '-frames:v', '1',
+    '-q:v', '2',
+    dest,
+  ]);
+}
+
+function writeThumbs(spec, video) {
+  const [poster, end] = thumbTimes(spec);
+  grabStill(video, poster, join(spec.out, 'brag-thumb.jpg'));
+  grabStill(video, end, join(spec.out, 'brag-thumb-end.jpg'));
+  console.log(`thumbs: ${join(spec.out, 'brag-thumb.jpg')}`);
+}
+
+function writeGif(spec, video, seconds) {
+  const gif = join(spec.out, 'brag-hook.gif');
+  const palette = join(spec.out, 'work', 'hook-palette.png');
+  mkdirSync(dirname(palette), { recursive: true });
+  const vf = 'fps=15,scale=720:-1:flags=lanczos';
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-t', String(seconds), '-i', video, '-vf', `${vf},palettegen`, palette]);
+  execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-t', String(seconds), '-i', video, '-i', palette, '-lavfi', `${vf}[x];[x][1:v]paletteuse`, '-an', gif]);
+  console.log(`gif: ${gif}`);
+}
+
+function writeWebm(spec, video, seconds) {
+  const webm = join(spec.out, 'brag-hook.webm');
+  execFileSync('ffmpeg', [
+    '-y', '-loglevel', 'error',
+    '-t', String(seconds),
+    '-i', video,
+    '-an',
+    '-c:v', 'libvpx-vp9',
+    '-crf', '33',
+    '-b:v', '0',
+    '-row-mt', '1',
+    webm,
+  ]);
+  console.log(`webm: ${webm}`);
 }
 
 const args = parseArgs(process.argv.slice(2));
 if (!args.spec) {
-  console.error('usage: node render.mjs spec.json [--stills] [--pack] [--playwright <path>]');
+  console.error('usage: node render.mjs spec.json [--stills] [--pack] [--gif] [--webm] [--thumbs] [--platform reels|tiktok] [--playwright <path>]');
+  process.exit(1);
+}
+if (args.askedPlatform && args.platform !== 'reels' && args.platform !== 'tiktok') {
+  console.error('error: --platform needs reels or tiktok');
   process.exit(1);
 }
 
@@ -128,4 +262,28 @@ for (const format of formats) {
   }
   const base = format === prepared.format ? 'brag' : `brag-${format}`;
   await renderOne(spec, { playwright, stills: args.stills, base });
+}
+
+if (!args.stills) {
+  const master = join(prepared.out, 'brag.mp4');
+  if (existsSync(master)) {
+    const hook = trimPoint(prepared, 6);
+    if (args.thumbs) writeThumbs(prepared, master);
+    if (args.gif) writeGif(prepared, master, hook);
+    if (args.webm) writeWebm(prepared, master, hook);
+  }
+  if (args.platform) {
+    if (prepared.format !== 'vertical') {
+      console.warn(`warning: --platform ${args.platform} runs only when the master format is vertical`);
+    } else {
+      const preset = platformPreset(args.platform);
+      const spec = {
+        ...prepared,
+        width: preset.width,
+        height: preset.height,
+        caption: { raise: preset.raise },
+      };
+      await renderOne(spec, { playwright, stills: false, base: `brag-${args.platform}`, loudnorm: true });
+    }
+  }
 }

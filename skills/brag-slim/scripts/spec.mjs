@@ -1,5 +1,8 @@
 // Storyboard contract for the default /brag pipeline.
 // The agent writes spec.json. render.mjs refuses to draw a spec that fails validateSpec.
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const TONES = ['default', 'polished', 'yc-parody', 'chaotic', 'deadpan', 'cinematic', 'app-store', 'demo', 'launch'];
 
@@ -19,6 +22,30 @@ export const FORMATS = {
   vertical: { width: 1080, height: 1920, margin: 80, marginY: 160 },
   square: { width: 1080, height: 1080, margin: 80, marginY: 80 },
 };
+
+const PLATFORM_PRESETS = {
+  reels: { width: 1080, height: 1920, raise: 220, file: 'brag-reels.mp4' },
+  tiktok: { width: 1080, height: 1920, raise: 220, file: 'brag-tiktok.mp4' },
+};
+
+// Extra caption inset for a platform pass. Anything else stays on the safe-area inset.
+export function platformPreset(name) {
+  const preset = PLATFORM_PRESETS[name];
+  if (!preset) return { raise: 0, width: 0, height: 0, file: null };
+  return { ...preset };
+}
+
+export const LOOP_HOLD_FRAMES = 15;
+export const LOOP_HOLD_LIMIT = 35.5;
+
+// 15 frames at 30fps is 0.5s. Skip when the encoded file would pass 35.5s.
+export function loopHoldPad(spec) {
+  if (!spec || spec.loopHold !== true) return 0;
+  const fps = spec.fps > 0 ? spec.fps : 30;
+  const pad = LOOP_HOLD_FRAMES / fps;
+  if ((Number(spec.duration) || 0) + pad > LOOP_HOLD_LIMIT) return 0;
+  return pad;
+}
 
 export const TONE_MOTION = {
   default: { wipe: 'shutter', anim: 'slam', background: 'blobs' },
@@ -125,6 +152,55 @@ function walkStrings(value, visit) {
   else if (value && typeof value === 'object') Object.values(value).forEach((item) => walkStrings(item, visit));
 }
 
+let paletteBedsCache;
+
+function paletteBedList() {
+  if (paletteBedsCache) return paletteBedsCache;
+  const path = join(dirname(fileURLToPath(import.meta.url)), '../../brag/assets/palette.json');
+  if (!existsSync(path)) {
+    paletteBedsCache = [];
+    return paletteBedsCache;
+  }
+  try {
+    const palette = JSON.parse(readFileSync(path, 'utf8'));
+    const beds = palette?.beds ?? palette?.music?.beds;
+    if (Array.isArray(beds)) paletteBedsCache = beds.filter(Boolean);
+    else if (beds && typeof beds === 'object') {
+      paletteBedsCache = Object.entries(beds).map(([tone, bed]) => ({ tone, ...(bed ?? {}) }));
+    } else paletteBedsCache = [];
+  } catch {
+    paletteBedsCache = [];
+  }
+  return paletteBedsCache;
+}
+
+function bedFiles(bed) {
+  return [bed.file, bed.path, bed.src, bed.bed].filter((value) => typeof value === 'string' && value.trim());
+}
+
+function bedMatchesFile(bed, file) {
+  const wanted = file.replaceAll('\\', '/');
+  const wantedBase = wanted.split('/').pop();
+  return bedFiles(bed).some((name) => {
+    const normal = name.replaceAll('\\', '/');
+    return normal === wanted || wanted.endsWith(`/${normal}`) || normal.endsWith(`/${wanted}`) || normal.split('/').pop() === wantedBase;
+  });
+}
+
+function bedCredit(bed) {
+  return bed && typeof bed.credit === 'string' ? bed.credit.trim() : '';
+}
+
+// The tone's palette bed, or the bed named by music.file. A synth bed has no credit.
+function paletteCredit(spec) {
+  const beds = paletteBedList();
+  if (!beds.length) return '';
+  const file = spec.music?.file;
+  if (typeof file === 'string' && file.trim()) return bedCredit(beds.find((bed) => bedMatchesFile(bed, file.trim())));
+  const tone = spec.tone;
+  return bedCredit(beds.find((bed) => bed.tone === tone || bed.id === tone || bed.name === tone));
+}
+
 export function prepareSpec(raw) {
   const spec = structuredClone(raw ?? {});
   spec.cut = spec.cut ?? 'launch';
@@ -145,6 +221,10 @@ export function prepareSpec(raw) {
   if (spec.duration != null) {
     if (spec.music.drop == null) spec.music.drop = spec.duration < 8 ? 1.5 : spec.duration < 16 ? 3 : 4;
     if (spec.music.end == null) spec.music.end = Math.max(spec.music.drop + 0.4, spec.duration - Math.min(2.5, spec.duration * 0.18));
+  }
+  if (spec.music.off !== true && spec.noMusic !== true) {
+    const credit = paletteCredit(spec);
+    if (credit) spec.music.credit = credit;
   }
   const motion = TONE_MOTION[spec.tone] ?? TONE_MOTION.default;
   spec.background = spec.background ?? motion.background;
@@ -207,15 +287,43 @@ export function reflow(spec, format) {
   return next;
 }
 
+function settledSceneTime(scene) {
+  const dur = scene.e - scene.s;
+  return scene.s + Math.min(Math.max(0.55, dur * 0.4), Math.max(0.05, dur - 0.08));
+}
+
 export function stillTimes(spec) {
   const times = [];
   for (const scene of spec.scenes ?? []) {
-    const dur = scene.e - scene.s;
-    const settled = scene.s + Math.min(Math.max(0.55, dur * 0.4), Math.max(0.05, dur - 0.08));
-    times.push(+settled.toFixed(3));
+    times.push(+settledSceneTime(scene).toFixed(3));
     if (scene.s > 0.05) times.push(+scene.s.toFixed(3));
   }
   return times;
+}
+
+export function thumbTimes(spec) {
+  const override = spec?.thumbs;
+  if (Array.isArray(override) && override.length >= 2 && override.slice(0, 2).every((time) => typeof time === 'number' && Number.isFinite(time))) {
+    return [override[0], override[1]];
+  }
+  const poster = typeof spec?.poster === 'number' && Number.isFinite(spec.poster) ? spec.poster : 0;
+  const last = (spec?.scenes ?? [])[(spec?.scenes ?? []).length - 1];
+  const end = last && last.e > last.s ? +settledSceneTime(last).toFixed(3) : poster;
+  return [poster, end];
+}
+
+// The last beat at or under `limit`, and never past the spec duration.
+export function trimPoint(spec, limit = 6) {
+  const duration = Number(spec?.duration);
+  const cap = Math.min(limit, duration > 0 ? duration : limit);
+  const bpm = Number(spec?.music?.bpm);
+  const beat = 60 / (bpm > 0 ? bpm : 120);
+  const downbeat = Number(spec?.music?.downbeat);
+  const origin = Number.isFinite(downbeat) ? downbeat : 0;
+  const steps = Math.floor((cap - origin) / beat + 1e-6);
+  const at = origin + Math.max(0, steps) * beat;
+  const cut = at > 0.05 && at <= cap + 1e-6 ? at : cap;
+  return +Math.max(0, cut).toFixed(3);
 }
 
 function srtStamp(t) {
