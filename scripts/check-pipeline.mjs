@@ -95,6 +95,28 @@ assert(square.ok, `square reflow failed: ${square.errors.join('; ')}`);
 
 assert(toSrt(valid ? prepareSpec(goodSpec()).captions : []).includes('Horse Tinder.'), 'srt should include caption text');
 
+const timed = prepareSpec({
+  duration: 8,
+  tone: 'default',
+  music: {
+    bpm: 120,
+    regions: [
+      { at: 0.3, start: 0.2, dur: 1 },
+      { at: 0.3, start: 0.2, dur: 1, lock: false },
+    ],
+  },
+});
+const [snapped, locked] = timed.music.regions;
+assert(snapped.at === 0.5 && snapped.start === 0, `region snapped to ${snapped.at} / ${snapped.start}`);
+assert(locked.at === 0.3 && locked.start === 0.2, `locked region moved to ${locked.at} / ${locked.start}`);
+
+const offDrop = prepareSpec(goodSpec());
+offDrop.music.drop = 1.2;
+assert(validateSpec(offDrop).warnings.some((warning) => warning.includes('music.drop')), 'a drop away from a scene boundary should warn');
+const bareFile = prepareSpec({ ...goodSpec(), music: { file: 'custom.wav', bpm: 100 } });
+const bareFileResult = validateSpec(bareFile);
+assert(!bareFileResult.ok && bareFileResult.errors.some((error) => error.includes('bpm and downbeat')), 'a file without downbeat should fail');
+
 assert(JSON.stringify(Object.keys(TONE_MUSIC).sort()) === JSON.stringify([...TONES].sort()), 'every tone needs a music preset');
 for (const preset of Object.values(TONE_MUSIC)) assert(DENSITIES.includes(preset.density), `unknown density ${preset.density}`);
 
@@ -120,6 +142,21 @@ try {
   makeSoundtrack({ duration: 2, music: { off: true }, sfx: false, scenes: [{ s: 0, e: 2, wipe: 'cut', layers: [] }] }, {}, silent);
   const silentWav = await readFile(silent);
   assert(silentWav.readUInt32LE(40) / 4 === Math.round(44100 * 2), 'silent soundtrack should still match the duration');
+  let silentPeak = 0;
+  for (let i = 44; i + 1 < silentWav.length; i += 2) silentPeak = Math.max(silentPeak, Math.abs(silentWav.readInt16LE(i)));
+  assert(silentPeak === 0, 'silent soundtrack should stay silent');
+
+  const loudFile = path.join(dir, 'loudnorm.wav');
+  makeSoundtrack({
+    duration: 4,
+    music: { bpm: 120, mode: 'major', density: 'sparse', gain: 1, drop: 1, end: 3.5 },
+    scenes: [
+      { s: 0, e: 2, wipe: 'cut', layers: [] },
+      { s: 2, e: 4, wipe: 'cut', layers: [] },
+    ],
+  }, {}, loudFile);
+  const loudWav = await readFile(loudFile);
+  assert(loudWav.readUInt32LE(40) / 4 === 44100 * 4, `loudnorm soundtrack is ${loudWav.readUInt32LE(40) / 4} samples`);
 } finally {
   await rm(dir, { recursive: true, force: true });
 }
