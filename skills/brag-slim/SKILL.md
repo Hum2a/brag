@@ -160,6 +160,28 @@ await rec.close();
 await writeContactSheet('<output-dir>/takes/use');
 ```
 
+`take` accepts `crop: { top, right, bottom, left }` as fractions of the frame and stores it on `index.json`. A clip insets the sampled picture by those fractions, so a status bar can be dropped without a second recording.
+
+```javascript
+const take = await rec.take('use', {
+  allow: (url) => url.hostname === 'localhost',
+  crop: { top: 0.06, right: 0, bottom: 0, left: 0 },
+});
+```
+
+A clip with `spotlight: true` draws a radial dim inside the clip frame, centered on the cursor at that moment in the take. It uses the move and click events already in the log. The dim is `data-decor="1"`.
+
+A video file you already have is a take. `importTake(file, outDir, name)` has ffmpeg write 30fps JPEGs and an `index.json` of `{ viewport, scale: 1, frames: [{ f, t }], events: [] }`. `t` is the frame index divided by 30. The viewport comes from ffprobe. Use the folder as a normal take; `from` on the clip is the in-point. `probeAudio(file)` returns `{ duration }` from ffprobe and does not mix. Use that duration when you write the voice line.
+
+```javascript
+import { importTake, probeAudio } from '<script-dir>/live-capture.mjs';
+
+importTake('demo.mp4', '<output-dir>/takes', 'demo');
+const voice = probeAudio('<output-dir>/assets/voiceover.wav');
+```
+
+New recordings set each frame's `t` to its index divided by 30 and quantize event times onto that grid. An index you already have is left as it is.
+
 `format` picks the viewport (`landscape`, `vertical`, `square`). Plan the action before recording, then have the cursor do it. Prefer the product's own motion over motion added afterwards. Read each take's `contact.jpg` before cutting. Pop-ups, off-screen controls, and restored state ruin takes silently. Retake anything that would misrepresent the action.
 
 Point `spec.json` at `"takes": "takes"`. A screenshot, when there is no session to record, is an `image` layer whose `src` is a file in the output directory.

@@ -1,9 +1,11 @@
 // Validator, soundtrack length, tone-name parity, and the slim.md sync check.
 // No browser and no full-frame render.
+import { spawnSync } from 'node:child_process';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { importTake } from '../skills/brag-slim/scripts/live-capture.mjs';
 import { makeSoundtrack } from '../skills/brag-slim/scripts/live-sound.mjs';
 import {
   DENSITIES,
@@ -283,6 +285,41 @@ try {
   assert(loudWav.readUInt32LE(40) / 4 === 44100 * 4, `loudnorm soundtrack is ${loudWav.readUInt32LE(40) / 4} samples`);
 } finally {
   await rm(dir, { recursive: true, force: true });
+}
+
+function commandWorks(bin) {
+  const result = spawnSync(bin, ['-version'], { encoding: 'utf8', windowsHide: true });
+  return result.status === 0;
+}
+
+if (commandWorks('ffmpeg')) {
+  const importDir = await mkdtemp(path.join(tmpdir(), 'brag-import-'));
+  try {
+    const clip = path.join(importDir, 'color.mp4');
+    const count = 12;
+    const generated = spawnSync('ffmpeg', [
+      '-y', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', 'color=c=blue:s=80x48:r=30',
+      '-frames:v', String(count),
+      '-pix_fmt', 'yuv420p',
+      clip,
+    ], { encoding: 'utf8', windowsHide: true });
+    assert(generated.status === 0, `ffmpeg could not write a color clip: ${generated.stderr || generated.error?.message || generated.status}`);
+    if (generated.status === 0) {
+      importTake(clip, importDir, 'color');
+      const index = JSON.parse(await readFile(path.join(importDir, 'color', 'index.json'), 'utf8'));
+      assert(index.frames.length === count, `imported ${index.frames.length} frames, expected ${count}`);
+      assert(index.scale === 1, 'imported take scale should be 1');
+      assert(index.viewport?.width === 80 && index.viewport?.height === 48, `viewport should be 80x48, got ${index.viewport?.width}x${index.viewport?.height}`);
+      assert(Array.isArray(index.events) && index.events.length === 0, 'imported take should have no events');
+      index.frames.forEach((frame, i) => {
+        assert(Math.abs(frame.t - i / 30) < 1e-9, `frame ${i} t is ${frame.t}, expected ${i / 30}`);
+        if (i > 0) assert(Math.abs(frame.t - index.frames[i - 1].t - 1 / 30) < 1e-9, `frame ${i} t spacing is off`);
+      });
+    }
+  } finally {
+    await rm(importDir, { recursive: true, force: true });
+  }
 }
 
 const [skill, tones, slim] = await Promise.all([

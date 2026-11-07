@@ -123,9 +123,11 @@ const built = S.scenes.map((sc) => {
       }
       const img = el('img', 'position:absolute;left:0;top:0;max-width:none', frame);
       paintFinish(frame, img, l);
+      const spot = l.spotlight ? el('div', 'position:absolute;inset:0;pointer-events:none', frame) : null;
+      if (spot) spot.dataset.decor = '1';
       const marks = (l.overlays ?? []).map((o) => { const m = el('div', 'position:absolute;display:flex;align-items:center;white-space:nowrap;font:800 16px ' + S.pal.font + ';letter-spacing:-.02em;color:' + (o.color ?? '#fff') + ';background:' + (o.fill ?? 'transparent'), frame); m.textContent = o.text ?? ''; return { o, m }; });
       if (l.chrome) addChrome(host, l.chrome);
-      return { l, node: host, img, w, h, marks };
+      return { l, node: host, img, w, h, marks, spot };
     }
     if (l.type === 'text') {
       const node = el('div', 'position:absolute;left:' + l.x + 'px;top:' + l.y + 'px;width:' + (l.w ?? (W - M * 2)) + 'px;text-align:' + (l.align ?? 'center') + ';font:' + (l.weight ?? 800) + ' ' + l.size + 'px/' + (l.lh ?? 1.08) + ' ' + (l.font ?? S.pal.font) + ';letter-spacing:' + (l.ls ?? '-.02em') + ';color:' + S.pal.fg + ';text-shadow:0 6px 40px rgba(0,0,0,.45)', root);
@@ -302,16 +304,24 @@ window.seek = async (t) => {
         const tk = T[l.take], vw = tk.viewport.width, vh = tk.viewport.height, frames = tk.frames;
         const raw = clipTime(l, st);
         const ct = Math.min(frames[frames.length - 1].t, Math.max(frames[0].t, raw));
-        let z = l.zoom ?? 1, cx = l.cx ?? vw / 2, cy = l.cy ?? vh / 2;
+        const crop = tk.crop || {}, cL = crop.left || 0, cT = crop.top || 0, cR = crop.right || 0, cB = crop.bottom || 0;
+        const ox = cL * vw, oy = cT * vh, sw = Math.max(1, vw * (1 - cL - cR)), sh = Math.max(1, vh * (1 - cT - cB));
+        let z = l.zoom ?? 1, cx = l.cx ?? ox + sw / 2, cy = l.cy ?? oy + sh / 2;
         if (l.follow) { const c = cursorAt(l.take, ct); if (c) { cx = c[0]; cy = c[1]; } }
         if (l.cam) {
           const cam = blendCam(l.cam, st);
           cx = cam[0]; cy = cam[1]; z = cam[2];
         }
-        const K = Math.max(item.w / vw, item.h / vh) * z, iw = vw * K, ih = vh * K;
-        const left = clamp(item.w / 2 - cx * K, item.w - iw, 0), top = clamp(item.h / 2 - cy * K, item.h - ih, 0);
+        const K = Math.max(item.w / sw, item.h / sh) * z, iw = vw * K;
+        const left = clamp(item.w / 2 - cx * K, item.w - (ox + sw) * K, -ox * K), top = clamp(item.h / 2 - cy * K, item.h - (oy + sh) * K, -oy * K);
         item.img.style.width = iw + 'px'; item.img.style.left = left + 'px'; item.img.style.top = top + 'px';
         item.marks.forEach(({ o, m }) => { m.style.left = (left + o.x * K) + 'px'; m.style.top = (top + o.y * K) + 'px'; m.style.width = (o.w * K) + 'px'; m.style.height = (o.h * K) + 'px'; m.style.fontSize = ((o.size ?? 16) * K) + 'px'; m.style.paddingLeft = (6 * K) + 'px'; });
+        if (item.spot) {
+          const c = cursorAt(l.take, ct);
+          const sx = c ? left + c[0] * K : item.w / 2, sy = c ? top + c[1] * K : item.h / 2;
+          const rad = Math.max(item.w, item.h) * .42;
+          item.spot.style.background = 'radial-gradient(circle ' + rad + 'px at ' + sx + 'px ' + sy + 'px, rgba(0,0,0,0) 0%, rgba(0,0,0,.62) 100%)';
+        }
         const src = (S.takesPrefix || 'takes') + '/' + l.take + '/' + frameAt(l.take, ct);
         if (item.src !== src) { item.src = src; item.img.src = src; waits.push(item.img.decode().catch(() => {})); }
       } else if (l.type === 'text') {
@@ -512,7 +522,7 @@ export async function compose(spec, { playwright, mode = 'final', times = [], ba
   const takes = {};
   for (const name of new Set(drawn.scenes.flatMap((s) => s.layers.filter((l) => l.type === 'clip').map((l) => l.take)))) {
     const idx = JSON.parse(readFileSync(`${spec.takes}/${name}/index.json`));
-    takes[name] = { viewport: idx.viewport, frames: idx.frames, moves: idx.events.filter((e) => ['move', 'step', 'click', 'down'].includes(e.type)).map((e) => ({ t: e.t, x: e.x, y: e.y })), events: idx.events };
+    takes[name] = { viewport: idx.viewport, crop: idx.crop, frames: idx.frames, moves: idx.events.filter((e) => ['move', 'step', 'click', 'down'].includes(e.type)).map((e) => ({ t: e.t, x: e.x, y: e.y })), events: idx.events };
   }
   const pageFile = `${spec.out}/${drawn.id}-${drawn.format}-stage.html`;
   writeFileSync(pageFile, `<!doctype html><meta charset="utf-8">${drawn.pal.fontLink ? `<link rel="stylesheet" href="${drawn.pal.fontLink}">` : ''}<style>html,body{margin:0;width:${drawn.width}px;height:${drawn.height}px;overflow:hidden;background:${drawn.pal.bg}}#stage{position:absolute;inset:0;overflow:hidden}</style><div id="stage"></div><script>window.SPEC=${JSON.stringify(drawn)};window.TAKES=${JSON.stringify(takes)};</script><script>${clipTime.toString()}
