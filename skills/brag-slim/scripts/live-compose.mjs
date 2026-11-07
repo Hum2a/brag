@@ -3,15 +3,18 @@
 //   await compose(spec, { playwright, mode: 'stills' | 'final', times, base })
 //
 // spec comes from spec.mjs (prepareSpec): width, height, margin, format, tone, captions,
-// endcard, scenes. Clip layers play takes from live-capture. Image layers use local files.
+// endcard, scenes, overlays. Clip layers play takes from live-capture. Image layers use local files.
 // Tones pick the wipe (shutter, dip, cut, fade, push, iris), type entrance, and background.
 // Grade, grain, vignette, blend, and shadow stay on the footage node.
+// Overlays draw on #stage for their own s and e, so a headline can outlive a cut.
+// A clip dur hides that clip at at + dur. The rest of the scene stays.
+// Final frames are stored at work/scenes/<format>/<first 16 hex of sceneKey>/ and assembled in scene order.
 import { pathToFileURL } from 'node:url';
-import { mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { makeSoundtrack } from './live-sound.mjs';
-import { FORMATS, clipTime, gradeFilter } from './spec.mjs';
+import { FORMATS, clipTime, gradeFilter, sceneKey } from './spec.mjs';
 
 const RUNTIME = String.raw`
 const S = window.SPEC, T = window.TAKES;
@@ -218,6 +221,28 @@ const built = S.scenes.map((sc) => {
   });
   return { sc, root, layers };
 });
+const overlays = (S.overlays || []).map((l) => {
+  if (l.type === 'text') {
+    const node = el('div', 'position:absolute;z-index:30;left:' + l.x + 'px;top:' + l.y + 'px;width:' + (l.w ?? (W - M * 2)) + 'px;text-align:' + (l.align ?? 'center') + ';font:' + (l.weight ?? 800) + ' ' + l.size + 'px/' + (l.lh ?? 1.08) + ' ' + (l.font ?? S.pal.font) + ';letter-spacing:' + (l.ls ?? '-.02em') + ';color:' + S.pal.fg + ';text-shadow:0 6px 40px rgba(0,0,0,.45)', stage);
+    const parts = [];
+    (l.lines || []).forEach((line, li) => {
+      const text = Array.isArray(line) ? line[0] : line;
+      const accent = Array.isArray(line) ? line[1] : false;
+      const row = el('div', 'overflow:' + (l.anim === 'mask' ? 'hidden' : 'visible') + ';padding-bottom:.08em', node);
+      if (accent) row.style.color = S.pal.accent;
+      if (l.anim === 'words') {
+        String(text).split(' ').forEach((word) => { const s = el('span', 'display:inline-block;margin-right:.26em;will-change:transform', row); s.textContent = word; parts.push(s); });
+      } else { const s = el('div', 'will-change:transform', row); s.textContent = text; s.dataset.li = li; parts.push(s); }
+    });
+    return { l, node, parts };
+  }
+  if (l.type === 'image') {
+    const node = el('img', 'position:absolute;z-index:30;left:' + l.x + 'px;top:' + l.y + 'px;width:' + l.w + 'px;' + (l.h == null ? '' : 'height:' + l.h + 'px;') + 'border-radius:' + (l.radius ?? 0) + 'px', stage);
+    node.src = l.src;
+    return { l, node };
+  }
+  return null;
+}).filter(Boolean);
 const scrim = el('div', 'position:absolute;left:0;right:0;bottom:0;z-index:39;pointer-events:none;background:linear-gradient(transparent, ' + S.pal.bg + ')', stage);
 scrim.style.height = Math.round(MY * 2.1) + 'px';
 const cap = el('div', 'position:absolute;z-index:40;text-align:center;font-weight:700;letter-spacing:-.02em;line-height:1.15;text-wrap:balance;color:' + S.pal.fg + ';font-family:' + S.pal.font + ';text-shadow:0 2px 18px rgba(0,0,0,.45)', stage);
@@ -269,7 +294,7 @@ window.seek = async (t) => {
       const { l, node } = item, at = l.at ?? 0;
       if (l.type === 'clip') {
         const p = outBack((st - at) / .5);
-        const vis = st >= at;
+        const vis = st >= at && (l.dur == null || st < at + l.dur);
         node.style.opacity = vis ? (l.dim ?? 1) : 0;
         const tilt = l.tilt ?? 0;
         node.style.transform = l.box === 'full' ? '' : 'perspective(1600px) rotateY(' + (tilt * (1 - clamp((st - at) / 1.2))) + 'deg) translateY(' + (1 - p) * 90 + 'px) scale(' + (.92 + .08 * p) + ')';
@@ -379,6 +404,33 @@ window.seek = async (t) => {
       }
     }
   }
+  for (const item of overlays) {
+    const { l, node } = item;
+    const on = t >= l.s && t < l.e;
+    node.style.display = on ? 'block' : 'none';
+    if (!on) continue;
+    const st = t - l.s, at = l.at ?? 0;
+    if (l.type === 'text') {
+      node.style.visibility = l.until !== undefined && st >= l.until ? 'hidden' : 'visible';
+      item.parts.forEach((part, i) => {
+        const d = at + i * (l.stagger ?? (l.anim === 'words' ? .085 : .22)), x = st - d;
+        if (l.anim === 'slam') {
+          const k = clamp(x / .22), s = 1.5 - .5 * outBack(x / .3);
+          part.style.opacity = k; part.style.transform = 'scale(' + s + ')';
+          part.style.transformOrigin = '50% 60%';
+        } else if (l.anim === 'mask') {
+          part.style.transform = 'translateY(' + (1 - out3(x / .42)) * 112 + '%)';
+        } else {
+          part.style.opacity = clamp(x / .16);
+          part.style.transform = 'translateY(' + (1 - outBack(x / .34)) * 46 + 'px) rotate(' + (1 - out3(x / .34)) * 4 + 'deg)';
+        }
+      });
+    } else if (l.type === 'image') {
+      const p = outBack((st - at) / .45);
+      node.style.opacity = st >= at ? 1 : 0;
+      node.style.transform = 'scale(' + (.6 + .4 * p) + ') rotate(' + (1 - out3((st - at) / .45)) * -10 + 'deg)';
+    }
+  }
   let shown = null;
   for (const c of S.captions || []) if (t >= c.s && t < c.e) shown = c;
   if (!shown) { cap.style.opacity = 0; scrim.style.opacity = 0; }
@@ -432,14 +484,24 @@ function pageSpec(spec) {
   copy.background = spec.background ?? 'blobs';
   copy.takesPrefix = spec.out && spec.takes ? relative(spec.out, spec.takes).replaceAll('\\', '/') || '.' : 'takes';
   const root = spec.out ?? '.';
-  for (const scene of copy.scenes ?? []) {
-    for (const layer of scene.layers ?? []) {
-      if (layer.type === 'image' && layer.src && !/^(https?:|file:|data:)/.test(layer.src)) {
-        layer.src = fileUrl(isAbsolute(layer.src) ? layer.src : resolve(root, layer.src));
-      }
+  const localize = (layer) => {
+    if (layer.type === 'image' && layer.src && !/^(https?:|file:|data:)/.test(layer.src)) {
+      layer.src = fileUrl(isAbsolute(layer.src) ? layer.src : resolve(root, layer.src));
     }
+  };
+  for (const scene of copy.scenes ?? []) {
+    for (const layer of scene.layers ?? []) localize(layer);
   }
+  for (const layer of copy.overlays ?? []) localize(layer);
   return copy;
+}
+
+function sceneFramesReady(dir, count) {
+  if (count < 1) return false;
+  for (let i = 0; i < count; i += 1) {
+    if (!existsSync(`${dir}/${String(i).padStart(5, '0')}.jpg`)) return false;
+  }
+  return true;
 }
 
 export async function compose(spec, { playwright, mode = 'final', times = [], base = 'brag' } = {}) {
@@ -477,10 +539,54 @@ ${RUNTIME}</script>`);
     return manifest;
   }
   const fps = spec.fps ?? 30;
-  const total = Math.round(spec.duration * fps);
-  const posterFrame = Math.min(total - 1, Math.max(0, Math.round((spec.poster ?? 0) * fps)));
-  for (let f = 0; f < total; f += 1) await shoot(f / fps, `${work}/frames/${String(f).padStart(5, '0')}.jpg`);
+  const jobs = (spec.scenes ?? []).map((scene) => {
+    const hash = sceneKey(spec, scene).slice(0, 16);
+    const count = Math.max(0, Math.round((scene.e - scene.s) * fps));
+    const dir = `${work}/scenes/${spec.format ?? 'landscape'}/${hash}`;
+    return { scene, hash, count, dir };
+  });
+  let shot = 0;
+  let reused = 0;
+  for (const job of jobs) {
+    if (job.count < 1) continue;
+    if (sceneFramesReady(job.dir, job.count)) {
+      reused += 1;
+      continue;
+    }
+    mkdirSync(job.dir, { recursive: true });
+    for (let f = 0; f < job.count; f += 1) {
+      let t = job.scene.s + f / fps;
+      if (t >= job.scene.e) t = job.scene.e - 1 / (fps * 2);
+      await shoot(t, `${job.dir}/${String(f).padStart(5, '0')}.jpg`);
+    }
+    shot += 1;
+  }
+  console.log(`scenes: ${reused} reused, ${shot} shot`);
+  rmSync(`${work}/frames`, { recursive: true, force: true });
+  mkdirSync(`${work}/frames`, { recursive: true });
+  let assembled = 0;
+  for (const job of jobs) {
+    for (let f = 0; f < job.count; f += 1) {
+      copyFileSync(`${job.dir}/${String(f).padStart(5, '0')}.jpg`, `${work}/frames/${String(assembled).padStart(5, '0')}.jpg`);
+      assembled += 1;
+    }
+  }
   await browser.close();
+  if (assembled < 1) throw new Error('no scene frames to assemble');
+  const posterTime = spec.poster ?? 0;
+  let posterFrame = 0;
+  let cursor = 0;
+  for (let i = 0; i < jobs.length; i += 1) {
+    const { scene, count } = jobs[i];
+    const holds = count > 0 && posterTime >= scene.s && (posterTime < scene.e || i === jobs.length - 1);
+    if (!holds) {
+      cursor += count;
+      continue;
+    }
+    posterFrame = cursor + Math.min(count - 1, Math.max(0, Math.round((posterTime - scene.s) * fps)));
+    break;
+  }
+  posterFrame = Math.min(assembled - 1, Math.max(0, posterFrame));
   copyFileSync(`${work}/frames/${String(posterFrame).padStart(5, '0')}.jpg`, `${spec.out}/${base}.jpg`);
   copyFileSync(`${work}/frames/${String(posterFrame).padStart(5, '0')}.jpg`, `${work}/frames/00000.jpg`);
   makeSoundtrack(spec, takes, `${work}/music.wav`);

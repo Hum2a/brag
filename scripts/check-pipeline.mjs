@@ -9,11 +9,13 @@ import {
   DENSITIES,
   TONE_MUSIC,
   TONES,
+  beatGrid,
   clipTime,
   gradeFilter,
   holdsFor,
   prepareSpec,
   reflow,
+  sceneKey,
   textHold,
   toSrt,
   validateSpec,
@@ -194,6 +196,50 @@ assert(validateSpec(offDrop).warnings.some((warning) => warning.includes('music.
 const bareFile = prepareSpec({ ...goodSpec(), music: { file: 'custom.wav', bpm: 100 } });
 const bareFileResult = validateSpec(bareFile);
 assert(!bareFileResult.ok && bareFileResult.errors.some((error) => error.includes('bpm and downbeat')), 'a file without downbeat should fail');
+
+const shortOverlay = goodSpec();
+shortOverlay.overlays = [{
+  type: 'text',
+  s: 1,
+  e: 1.4,
+  lines: [['This headline needs longer']],
+  x: 96,
+  y: 220,
+  w: 1200,
+  size: 64,
+}];
+const shortOverlayResult = validateSpec(prepareSpec(shortOverlay));
+assert(!shortOverlayResult.ok && shortOverlayResult.errors.some((error) => error.includes('needs')), 'an overlay that is too short should fail');
+
+const marked = goodSpec();
+marked.markers = { hook: 1, reveal: 4.2, punchline: 12 };
+marked.markersLock = { reveal: false };
+const markedSpec = prepareSpec(marked);
+const grid = beatGrid(markedSpec);
+assert(grid.some((beat) => Math.abs(beat - markedSpec.markers.hook) < 1e-6), 'a marker should snap onto a beat');
+assert(Math.abs(markedSpec.markers.hook - 1) > 1e-3, 'hook at 1s is off the beat grid and should move');
+assert(markedSpec.markers.reveal === 4.2, 'markersLock false should keep that marker put');
+const lateHook = validateSpec(prepareSpec({ ...goodSpec(), markers: { hook: 3 } }));
+assert(lateHook.warnings.some((warning) => warning.includes('hook')), 'a hook later than 2 seconds should warn');
+
+const left = prepareSpec(goodSpec());
+const right = prepareSpec(goodSpec());
+left.captions = [];
+right.captions = [];
+const shared = structuredClone(left.scenes[0]);
+const other = structuredClone(left.scenes[1]);
+const tail = structuredClone(left.scenes[2]);
+const place = (scene, s) => {
+  const dur = scene.e - scene.s;
+  return { ...scene, s, e: s + dur };
+};
+right.scenes = [
+  place(other, 0),
+  place(shared, other.e - other.s),
+  place(tail, (other.e - other.s) + (shared.e - shared.s)),
+];
+assert(sceneKey(left, left.scenes[0]) === sceneKey(right, right.scenes[1]), 'a shared scene should keep the same sceneKey when the scene order swaps');
+assert(sceneKey(left, left.scenes[0]) !== sceneKey(right, right.scenes[0]), 'a different scene should not reuse that sceneKey');
 
 assert(JSON.stringify(Object.keys(TONE_MUSIC).sort()) === JSON.stringify([...TONES].sort()), 'every tone needs a music preset');
 for (const preset of Object.values(TONE_MUSIC)) assert(DENSITIES.includes(preset.density), `unknown density ${preset.density}`);

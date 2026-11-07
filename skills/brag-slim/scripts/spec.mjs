@@ -1,5 +1,6 @@
 // Storyboard contract for the default /brag pipeline.
 // The agent writes spec.json. render.mjs refuses to draw a spec that fails validateSpec.
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -278,24 +279,6 @@ export function nearestBeat(beats, t) {
   return best;
 }
 
-function holdsFor(spec, bounds) {
-  for (let i = 0; i < spec.scenes.length; i += 1) {
-    const scene = { ...spec.scenes[i], s: bounds[i], e: bounds[i + 1] };
-    if (!(scene.e > scene.s + 0.05)) return false;
-    for (const layer of scene.layers ?? []) {
-      if (layer.type === 'text' && layerCopy(layer).trim()) {
-        if (textHold(layer, scene) + 1e-3 < requiredHold(layerCopy(layer))) return false;
-      }
-      if (layer.type === 'endcard') {
-        const line = layer.line || spec.endcard?.line || layer.name || spec.endcard?.name || '';
-        const hold = (scene.e - scene.s) - (layer.at ?? 0);
-        if (line && hold + 1e-3 < requiredHold(line)) return false;
-      }
-    }
-  }
-  return true;
-}
-
 function snapCaption(cap, beats) {
   if (!cap || cap.lock === false || !cap.text) return cap;
   const need = requiredHold(cap.text);
@@ -347,6 +330,48 @@ export function snapBeats(spec) {
   return spec;
 }
 
+function round3(n) {
+  return Math.round(n * 1000) / 1000;
+}
+
+function markerSnaps(spec, name) {
+  const lock = spec.markersLock;
+  if (lock === false) return false;
+  if (lock && typeof lock === 'object' && lock[name] === false) return false;
+  return true;
+}
+
+function overlapping(items, scene) {
+  const start = scene?.s ?? 0;
+  const end = scene?.e ?? start;
+  return (items ?? [])
+    .filter((item) => item && typeof item.s === 'number' && typeof item.e === 'number' && item.s < end && item.e > start)
+    .map((item) => ({ ...item, s: round3(item.s - start), e: round3(item.e - start) }));
+}
+
+// Identity of one scene's picture. The directory name is the first 16 hex chars.
+// Absolute placement is not part of the key, so a rearranged spec reuses the frames.
+export function sceneKey(spec, scene) {
+  const start = scene?.s ?? 0;
+  const end = scene?.e ?? start;
+  const payload = {
+    layers: scene?.layers ?? [],
+    wipe: scene?.wipe ?? null,
+    push: scene?.push ?? null,
+    dur: round3(end - start),
+    captions: overlapping(spec?.captions, scene).map(({ s, e, text }) => ({ s, e, text })),
+    overlays: overlapping(spec?.overlays, scene),
+    pal: spec?.pal ?? null,
+    motion: spec?.motion ?? null,
+    background: spec?.background ?? null,
+    width: spec?.width ?? null,
+    height: spec?.height ?? null,
+    format: spec?.format ?? null,
+    fps: spec?.fps ?? null,
+  };
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
 export function prepareSpec(raw) {
   const spec = structuredClone(raw ?? {});
   spec.cut = spec.cut ?? 'launch';
@@ -381,6 +406,18 @@ export function prepareSpec(raw) {
     }
   }
   snapRegions(spec);
+  for (const layer of spec.overlays ?? []) {
+    if (layer.type === 'text' && layer.anim == null) layer.anim = motion.anim;
+  }
+  if (spec.markers && typeof spec.markers === 'object') {
+    const grid = beatGrid(spec);
+    for (const name of ['hook', 'reveal', 'punchline']) {
+      const time = spec.markers[name];
+      if (typeof time !== 'number' || !Number.isFinite(time)) continue;
+      if (!markerSnaps(spec, name)) continue;
+      spec.markers[name] = nearestBeat(grid, time);
+    }
+  }
   return snapBeats(spec);
 }
 
@@ -392,8 +429,9 @@ export function reflow(spec, format) {
   const sx = from ? to.width / from.width : 1;
   const sy = from ? to.height / from.height : 1;
   const s = Math.min(sx, sy);
-  for (const scene of next.scenes ?? []) {
-    for (const layer of scene.layers ?? []) {
+  const groups = () => [...(next.scenes ?? []).map((scene) => scene.layers ?? []), next.overlays ?? []];
+  for (const layers of groups()) {
+    for (const layer of layers) {
       if (Array.isArray(layer.box)) {
         const [x, y, w, h] = layer.box;
         layer.box = [Math.round(x * sx), Math.round(y * sy), Math.round(w * sx), Math.round(h * sy)];
@@ -411,8 +449,8 @@ export function reflow(spec, format) {
   next.height = to.height;
   next.margin = to.margin;
   next.marginY = to.marginY;
-  for (const scene of next.scenes ?? []) {
-    for (const layer of scene.layers ?? []) {
+  for (const layers of groups()) {
+    for (const layer of layers) {
       if (Array.isArray(layer.box)) {
         let [x, y, w, h] = layer.box;
         w = Math.max(1, Math.min(w, to.width));
@@ -474,13 +512,19 @@ export function clipTime(layer, sceneTime) {
 
 export function stillTimes(spec) {
   const times = [];
+  const duration = spec.duration ?? 0;
   for (const scene of spec.scenes ?? []) {
     const dur = scene.e - scene.s;
     const settled = scene.s + Math.min(Math.max(0.55, dur * 0.4), Math.max(0.05, dur - 0.08));
     times.push(+settled.toFixed(3));
     if (scene.s > 0.05) times.push(+scene.s.toFixed(3));
   }
-  return times;
+  for (const name of ['hook', 'reveal', 'punchline']) {
+    const t = spec.markers?.[name];
+    if (typeof t !== 'number' || t < -1e-3 || t > duration + 1e-3) continue;
+    times.push(+t.toFixed(3));
+  }
+  return [...new Set(times)];
 }
 
 function srtStamp(t) {
@@ -666,6 +710,39 @@ export function validateSpec(spec) {
       }
     });
     if (!spec.textOnly && !hasPicture) errors.push('a scene needs a clip or image of the product, or set textOnly because there is no UI');
+  }
+
+  if (spec.overlays != null) {
+    if (!Array.isArray(spec.overlays)) errors.push('overlays must be a list');
+    else {
+      spec.overlays.forEach((layer, i) => {
+        const label = `overlay ${i + 1}`;
+        if (!layer || (layer.type !== 'text' && layer.type !== 'image')) {
+          errors.push(`${label} must be text or image`);
+          return;
+        }
+        if (!(layer.e > layer.s)) {
+          errors.push(`${label} ends before it starts`);
+          return;
+        }
+        if (layer.type === 'text') {
+          if (!Array.isArray(layer.lines) || layer.lines.length === 0) errors.push(`${label} needs lines`);
+          const copy = layerCopy(layer);
+          if (copy.trim()) {
+            const hold = layer.e - layer.s;
+            const need = requiredHold(copy);
+            if (hold + 1e-3 < need) errors.push(`${label} "${copy}" is on screen ${hold.toFixed(2)}s and needs ${need.toFixed(2)}s`);
+          }
+        }
+        if (layer.type === 'image' && !layer.src) errors.push(`${label} needs a src`);
+        const problem = insideSafe(spec, layer, label);
+        if (problem) errors.push(problem);
+      });
+    }
+  }
+
+  if (typeof spec.markers?.hook === 'number' && spec.markers.hook > 2) {
+    warnings.push(`hook is at ${spec.markers.hook.toFixed(2)}s; the first 2 seconds decide whether anyone keeps watching`);
   }
 
   if (typeof spec.poster === 'number' && Array.isArray(scenes)) {

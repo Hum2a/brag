@@ -71,6 +71,10 @@ Write `brag-plan.md` and `spec.json` in the output directory. The plan is the ar
 - `captions`: `{ s, e, text }` for the muted read. A short label needs about 0.8s. A sentence needs about 0.3s per word. `style` is `plain` (default) or `pill`. `raise` adds pixels to the bottom inset. Wrap a word in asterisks (`*word*`) to draw it in `pal.accent`. The srt drops the asterisks and stays one cue per line. Kinetic headlines stay as text layers; a claim is one or the other
 - `endcard`: `name`, `line`, and `url` when the project has a URL or handle. A layer may set `mark` to a short string. The first 0.6s after `at` shows that mark large, then the name, the line, and the url. The line's readable hold starts after the sting
 - `scenes`: contiguous from 0 to `duration`. Each layer is a `clip`, `image`, `text`, `count`, `bars`, `rect`, `lower`, `sticker`, or `endcard`
+- `overlays`: optional `text` or `image` layers with their own `s` and `e`. They draw on the stage, not inside a scene, so a headline can stay up across a cut. The hold still has to be long enough to read, and the box stays in the safe area. An overlay does not replace the end card
+- A clip may set `dur` in seconds. The clip hides at `at + dur` and the rest of the scene stays. Leave `dur` out and the clip lasts until the scene ends
+- A scene may set `audioLead` or `audioLag` in seconds. Lead plays that scene's take effects and its wipe whoosh earlier. Lag plays them later. Nothing starts before 0 or after the duration. The bed does not move
+- `markers`: `{ hook, reveal, punchline }` in seconds. `prepareSpec` snaps each one onto the beat grid unless `markersLock` is false. Set `markersLock.hook` (or `reveal`, or `punchline`) to false to leave that one time where you put it. The hook belongs in the first 2 seconds. Stills include marker times that fall inside the cut
 - Text, counts, lower thirds, and stickers sit inside the safe area: 96px on landscape, 80px on square, 80px on the sides and 160px top and bottom on vertical
 - At least one `clip` or `image`, unless you set `textOnly` because there is nothing to show
 - An `endcard` layer in the final scene, with enough hold to read the line
@@ -135,7 +139,7 @@ Presets are defaults. A freeform direction ("fake Series A launch from 2016") ma
 
 ## Sound
 
-The bed, the whooshes, and the clicks from the take log are one mix on one beat grid, counted from the first frame. Effects sit under the music. You do not write a soundtrack by hand. `live-sound.mjs` does, from the tone, or from `music.file` when a track is chosen. Regions cut that file onto the grid. Without them, the file loops from the top. The finished mix is loudness-normalized to about -14 LUFS and the length stays put.
+The bed, the whooshes, and the clicks from the take log are one mix on one beat grid, counted from the first frame. Effects sit under the music. You do not write a soundtrack by hand. `live-sound.mjs` does, from the tone, or from `music.file` when a track is chosen. Regions cut that file onto the grid. Without them, the file loops from the top. The finished mix is loudness-normalized to about -14 LUFS and the length stays put. `audioLead` and `audioLag` on a scene move only that scene's take-log effects and wipe whoosh. The bed stays on the grid.
 
 ## 3. Record, check, render
 
@@ -168,7 +172,9 @@ node <script-dir>/render.mjs <output-dir>/spec.json
 node <script-dir>/render.mjs <output-dir>/spec.json --pack
 ```
 
-`--stills` writes `work/contact.jpg`: a settled frame of every scene, and the midpoint of every cut. Look at it. Fix overflow, collisions, type outside the safe area, and a muddy cut. A plain crossfade between two busy layouts makes a double exposure; the tone's wipe already avoids that. Dip and fade go through the background. Do not render the full trailer until the contact sheet is clean.
+`--stills` writes `work/contact.jpg`: a settled frame of every scene, the midpoint of every cut, and any marker time that falls inside the cut. Look at it. Fix overflow, collisions, type outside the safe area, and a muddy cut. A plain crossfade between two busy layouts makes a double exposure; the tone's wipe already avoids that. Dip and fade go through the background. Do not render the full trailer until the contact sheet is clean.
+
+Each scene's frames are kept in `work/scenes/<format>/<hash>/`. The hash is the first 16 hex characters of that scene's key: its layers, the captions and overlays whose windows overlap it, the palette, the motion, and the stage size. A second spec that reuses that scene, even in a different order, reuses those frames. A rearranged cut is another spec file.
 
 `--pack` reflows the same spec into the other two aspect ratios. It is opt-in because each pass screenshots every frame.
 
