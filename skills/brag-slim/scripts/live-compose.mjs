@@ -4,13 +4,13 @@
 //
 // spec comes from spec.mjs (prepareSpec): width, height, margin, format, tone, captions,
 // endcard, scenes. Clip layers play takes from live-capture. Image layers use local files.
-// Tones pick the wipe (shutter, dip, cut, fade), type entrance, and background.
+// Tones pick the wipe (shutter, dip, cut, fade, push, iris), type entrance, and background.
 import { pathToFileURL } from 'node:url';
 import { mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { makeSoundtrack } from './live-sound.mjs';
-import { FORMATS } from './spec.mjs';
+import { FORMATS, clipTime } from './spec.mjs';
 
 const RUNTIME = String.raw`
 const S = window.SPEC, T = window.TAKES;
@@ -44,15 +44,59 @@ function cursorAt(take, t) {
   let best = ev[0]; for (const e of ev) if (e.t <= t) best = e;
   return [best.x, best.y];
 }
+function blendCam(cam, st) {
+  let a = cam[0], b = cam[cam.length - 1];
+  for (let i = 0; i < cam.length - 1; i += 1) if (st >= cam[i][0] && st <= cam[i + 1][0]) { a = cam[i]; b = cam[i + 1]; }
+  const k = b[0] === a[0] ? 1 : inOut((st - a[0]) / (b[0] - a[0]));
+  const mix = (u, v) => u + (v - u) * k;
+  if (st <= cam[0][0]) { a = b = cam[0]; }
+  return [mix(a[1], b[1]), mix(a[2], b[2]), mix(a[3], b[3])];
+}
+function splitSlots() {
+  const gap = 8;
+  if (S.format === 'vertical') {
+    const h = (H - gap) / 2;
+    return [{ x: 0, y: 0, w: W, h: h }, { x: 0, y: h + gap, w: W, h: h }];
+  }
+  const w = (W - gap) / 2;
+  return [{ x: 0, y: 0, w: w, h: H }, { x: w + gap, y: 0, w: w, h: H }];
+}
+function addChrome(host, kind) {
+  if (kind === 'phone') {
+    host.style.borderRadius = '42px';
+    const bezel = el('div', 'position:absolute;inset:0;border-radius:42px;box-shadow:inset 0 0 0 14px #16161a;pointer-events:none;z-index:3', host);
+    bezel.dataset.decor = '1';
+    const notch = el('div', 'position:absolute;top:8px;left:50%;width:26%;height:18px;transform:translateX(-50%);background:#16161a;border-radius:10px;pointer-events:none;z-index:4', host);
+    notch.dataset.decor = '1';
+  } else if (kind === 'browser') {
+    const bar = el('div', 'position:absolute;left:0;right:0;top:0;height:28px;display:flex;align-items:center;gap:6px;padding:0 10px;background:#eceae4;pointer-events:none;z-index:3', host);
+    bar.dataset.decor = '1';
+    ['#ff5f57', '#febc2e', '#28c840'].forEach((color) => { const dot = el('div', 'width:8px;height:8px;border-radius:50%;background:' + color, bar); dot.dataset.decor = '1'; });
+  }
+}
 const built = S.scenes.map((sc) => {
   const root = el('div', 'position:absolute;inset:0;display:none;transform-origin:50% 50%', stage);
+  const slots = sc.layout === 'split' ? splitSlots() : [];
+  let slotAt = 0;
   const layers = sc.layers.map((l) => {
+    const place = (l.type === 'clip' || l.type === 'image') && slotAt < slots.length ? slots[slotAt++] : null;
     if (l.type === 'clip') {
       const [x, y, w, h] = l.box === 'full' ? [0, 0, W, H] : l.box;
-      const frame = el('div', 'position:absolute;left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px;overflow:hidden;background:#fff;border-radius:' + (l.box === 'full' ? 0 : (l.radius ?? 26)) + 'px;' + (l.box === 'full' ? '' : 'box-shadow:0 34px 110px rgba(0,0,0,.6)'), root);
+      const radius = l.box === 'full' ? 0 : (l.radius ?? 26);
+      const shadow = l.box === 'full' ? '' : 'box-shadow:0 34px 110px rgba(0,0,0,.6)';
+      let host, frame;
+      if (place) {
+        const fit = Math.max(place.w / w, place.h / h);
+        host = el('div', 'position:absolute;left:' + place.x + 'px;top:' + place.y + 'px;width:' + place.w + 'px;height:' + place.h + 'px;overflow:hidden;background:#fff;border-radius:' + radius + 'px;' + shadow, root);
+        frame = el('div', 'position:absolute;left:50%;top:50%;width:' + w + 'px;height:' + h + 'px;overflow:hidden;transform:translate(-50%,-50%) scale(' + fit + ')', host);
+      } else {
+        frame = el('div', 'position:absolute;left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px;overflow:hidden;background:#fff;border-radius:' + radius + 'px;' + shadow, root);
+        host = frame;
+      }
       const img = el('img', 'position:absolute;left:0;top:0;max-width:none', frame);
       const marks = (l.overlays ?? []).map((o) => { const m = el('div', 'position:absolute;display:flex;align-items:center;white-space:nowrap;font:800 16px ' + S.pal.font + ';letter-spacing:-.02em;color:' + (o.color ?? '#fff') + ';background:' + (o.fill ?? 'transparent'), frame); m.textContent = o.text ?? ''; return { o, m }; });
-      return { l, node: frame, img, w, h, marks };
+      if (l.chrome) addChrome(host, l.chrome);
+      return { l, node: host, img, w, h, marks };
     }
     if (l.type === 'text') {
       const node = el('div', 'position:absolute;left:' + l.x + 'px;top:' + l.y + 'px;width:' + (l.w ?? (W - M * 2)) + 'px;text-align:' + (l.align ?? 'center') + ';font:' + (l.weight ?? 800) + ' ' + l.size + 'px/' + (l.lh ?? 1.08) + ' ' + (l.font ?? S.pal.font) + ';letter-spacing:' + (l.ls ?? '-.02em') + ';color:' + S.pal.fg + ';text-shadow:0 6px 40px rgba(0,0,0,.45)', root);
@@ -78,6 +122,18 @@ const built = S.scenes.map((sc) => {
       return { l, node, bars };
     }
     if (l.type === 'image') {
+      if (l.cam) {
+        const x = place ? place.x : l.x, y = place ? place.y : l.y, w = place ? place.w : l.w, h = place ? place.h : (l.h || l.w);
+        const frame = el('div', 'position:absolute;left:' + x + 'px;top:' + y + 'px;width:' + w + 'px;height:' + h + 'px;overflow:hidden;border-radius:' + (l.radius ?? 0) + 'px', root);
+        const img = el('img', 'position:absolute;left:0;top:0;max-width:none', frame);
+        img.src = l.src;
+        return { l, node: frame, img, w: w, h: h, lockH: !!(place || l.h) };
+      }
+      if (place) {
+        const node = el('img', 'position:absolute;left:' + place.x + 'px;top:' + place.y + 'px;width:' + place.w + 'px;height:' + place.h + 'px;object-fit:cover;border-radius:' + (l.radius ?? 0) + 'px', root);
+        node.src = l.src;
+        return { l, node };
+      }
       const node = el('img', 'position:absolute;left:' + l.x + 'px;top:' + l.y + 'px;width:' + l.w + 'px;border-radius:' + (l.radius ?? 0) + 'px', root);
       node.src = l.src;
       return { l, node };
@@ -111,6 +167,8 @@ const bands = [S.pal.accent, S.pal.glow || S.pal.accent, S.pal.bg].map((c) => el
 
 window.seek = async (t) => {
   const beat = (t % .5) / .5, pulse = Math.pow(1 - beat, 3);
+  const punchPeriod = 60 / ((S.music && S.music.bpm) || 120);
+  const punchImpulse = Math.pow(1 - ((t % punchPeriod) / punchPeriod), 3);
   if (mode === 'blobs') {
     blobA.style.transform = 'translate(' + (W * .12 + Math.sin(t * .55) * W * .16) + 'px,' + (-H * .14 + Math.cos(t * .42) * H * .1) + 'px) scale(' + (1 + pulse * .07) + ')';
     blobB.style.transform = 'translate(' + (W * .42 + Math.cos(t * .38) * W * .18) + 'px,' + (H * .18 + Math.sin(t * .5) * H * .12) + 'px)';
@@ -123,7 +181,13 @@ window.seek = async (t) => {
     if (!on) continue;
     const st = t - sc.s;
     const push = 1 + (sc.push ?? (sc.wipe === 'cut' ? 0 : .035)) * (st / (sc.e - sc.s));
-    root.style.transform = 'scale(' + push + ')';
+    const hit = sc.punch ? 1 + .04 * punchImpulse : 1;
+    const slide = sc.wipe === 'push' && sc.s > 0 ? 'translateX(' + ((1 - out3(clamp(st / .36))) * -100) + '%) ' : '';
+    root.style.transform = slide + 'scale(' + (push * hit) + ')';
+    if (sc.wipe === 'iris' && sc.s > 0) {
+      const k = clamp(st / .4);
+      root.style.clipPath = k >= 1 ? 'none' : 'circle(' + (k * 71) + '% at 50% 50%)';
+    } else root.style.clipPath = 'none';
     for (const item of layers) {
       const { l, node } = item, at = l.at ?? 0;
       if (l.type === 'clip') {
@@ -133,16 +197,14 @@ window.seek = async (t) => {
         const tilt = l.tilt ?? 0;
         node.style.transform = l.box === 'full' ? '' : 'perspective(1600px) rotateY(' + (tilt * (1 - clamp((st - at) / 1.2))) + 'deg) translateY(' + (1 - p) * 90 + 'px) scale(' + (.92 + .08 * p) + ')';
         if (!vis) continue;
-        const ct = (l.from ?? 0) + (st - at) * (l.speed ?? 1), tk = T[l.take], vw = tk.viewport.width, vh = tk.viewport.height;
+        const tk = T[l.take], vw = tk.viewport.width, vh = tk.viewport.height, frames = tk.frames;
+        const raw = clipTime(l, st);
+        const ct = Math.min(frames[frames.length - 1].t, Math.max(frames[0].t, raw));
         let z = l.zoom ?? 1, cx = l.cx ?? vw / 2, cy = l.cy ?? vh / 2;
         if (l.follow) { const c = cursorAt(l.take, ct); if (c) { cx = c[0]; cy = c[1]; } }
         if (l.cam) {
-          let a = l.cam[0], b = l.cam[l.cam.length - 1];
-          for (let i = 0; i < l.cam.length - 1; i += 1) if (st >= l.cam[i][0] && st <= l.cam[i + 1][0]) { a = l.cam[i]; b = l.cam[i + 1]; }
-          const k = b[0] === a[0] ? 1 : inOut((st - a[0]) / (b[0] - a[0]));
-          const mix = (u, v) => u + (v - u) * k;
-          if (st <= l.cam[0][0]) { a = b = l.cam[0]; }
-          cx = mix(a[1], b[1]); cy = mix(a[2], b[2]); z = mix(a[3], b[3]);
+          const cam = blendCam(l.cam, st);
+          cx = cam[0]; cy = cam[1]; z = cam[2];
         }
         const K = Math.max(item.w / vw, item.h / vh) * z, iw = vw * K, ih = vh * K;
         const left = clamp(item.w / 2 - cx * K, item.w - iw, 0), top = clamp(item.h / 2 - cy * K, item.h - ih, 0);
@@ -181,9 +243,32 @@ window.seek = async (t) => {
         const shown = out3((st - at) / (l.dur ?? 1.6)) * l.n;
         item.bars.forEach((b, i) => { const g = clamp(shown - i); b.style.height = (((i + 1) / l.n) * 100 * g) + '%'; b.style.opacity = g > 0 ? 1 : 0; });
       } else if (l.type === 'image') {
-        const p = outBack((st - at) / .45);
-        node.style.opacity = st >= at ? 1 : 0;
-        node.style.transform = 'scale(' + (.6 + .4 * p) + ') rotate(' + (1 - out3((st - at) / .45)) * -10 + 'deg)';
+        if (l.cam && item.img) {
+          node.style.opacity = st >= at ? 1 : 0;
+          const pan = () => {
+            const nw = item.img.naturalWidth, nh = item.img.naturalHeight;
+            if (!nw || !nh) return;
+            if (!item.lockH) {
+              item.h = item.w * nh / nw;
+              node.style.height = item.h + 'px';
+              item.lockH = true;
+            }
+            const fw = item.w, fh = item.h, cam = blendCam(l.cam, st);
+            const cx = cam[0] * nw, cy = cam[1] * nh, z = cam[2];
+            const K = Math.max(fw / nw, fh / nh) * z;
+            const iw = nw * K, ih = nh * K;
+            item.img.style.width = iw + 'px';
+            item.img.style.height = ih + 'px';
+            item.img.style.left = clamp(fw / 2 - cx * K, fw - iw, 0) + 'px';
+            item.img.style.top = clamp(fh / 2 - cy * K, fh - ih, 0) + 'px';
+          };
+          if (item.img.naturalWidth) pan();
+          else waits.push(item.img.decode().then(pan).catch(() => {}));
+        } else {
+          const p = outBack((st - at) / .45);
+          node.style.opacity = st >= at ? 1 : 0;
+          node.style.transform = 'scale(' + (.6 + .4 * p) + ') rotate(' + (1 - out3((st - at) / .45)) * -10 + 'deg)';
+        }
       } else {
         node.style.opacity = st >= at ? (l.opacity ?? 1) : 0;
       }
@@ -246,7 +331,8 @@ export async function compose(spec, { playwright, mode = 'final', times = [], ba
     takes[name] = { viewport: idx.viewport, frames: idx.frames, moves: idx.events.filter((e) => ['move', 'step', 'click', 'down'].includes(e.type)).map((e) => ({ t: e.t, x: e.x, y: e.y })), events: idx.events };
   }
   const pageFile = `${spec.out}/${drawn.id}-${drawn.format}-stage.html`;
-  writeFileSync(pageFile, `<!doctype html><meta charset="utf-8">${drawn.pal.fontLink ? `<link rel="stylesheet" href="${drawn.pal.fontLink}">` : ''}<style>html,body{margin:0;width:${drawn.width}px;height:${drawn.height}px;overflow:hidden;background:${drawn.pal.bg}}#stage{position:absolute;inset:0;overflow:hidden}</style><div id="stage"></div><script>window.SPEC=${JSON.stringify(drawn)};window.TAKES=${JSON.stringify(takes)};</script><script>${RUNTIME}</script>`);
+  writeFileSync(pageFile, `<!doctype html><meta charset="utf-8">${drawn.pal.fontLink ? `<link rel="stylesheet" href="${drawn.pal.fontLink}">` : ''}<style>html,body{margin:0;width:${drawn.width}px;height:${drawn.height}px;overflow:hidden;background:${drawn.pal.bg}}#stage{position:absolute;inset:0;overflow:hidden}</style><div id="stage"></div><script>window.SPEC=${JSON.stringify(drawn)};window.TAKES=${JSON.stringify(takes)};</script><script>${clipTime.toString()}
+${RUNTIME}</script>`);
   const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--allow-file-access-from-files'] });
   const page = await browser.newPage({ viewport: { width: drawn.width, height: drawn.height } });
   page.on('pageerror', (e) => console.log('page error', e.message));

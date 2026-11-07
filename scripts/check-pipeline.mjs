@@ -9,6 +9,7 @@ import {
   DENSITIES,
   TONE_MUSIC,
   TONES,
+  clipTime,
   prepareSpec,
   reflow,
   toSrt,
@@ -94,6 +95,30 @@ const square = validateSpec(prepareSpec(reflow(prepareSpec(goodSpec()), 'square'
 assert(square.ok, `square reflow failed: ${square.errors.join('; ')}`);
 
 assert(toSrt(valid ? prepareSpec(goodSpec()).captions : []).includes('Horse Tinder.'), 'srt should include caption text');
+
+// Speed holds at 1 until 0.5s, then at 2. One second of that ramp advances 1.5s of take.
+const ramped = clipTime({ from: 0, speed: 9, ramp: [[0, 1], [0.5, 2]] }, 1);
+assert(Math.abs(ramped - 1.5) < 1e-9, `a 1-second ramp from speed 1 to speed 2 advances 1.5s of take, got ${ramped}`);
+const held = clipTime({ freeze: 2, speed: 4 }, 0);
+assert(held === 2 && clipTime({ freeze: 2, speed: 4 }, 3) === held, 'a freeze does not advance');
+assert(clipTime({ speed: -1, from: 2 }, 1) === 1, 'speed -1 from from:2 at 1s of scene time is take time 1');
+
+const badChrome = prepareSpec(goodSpec());
+badChrome.scenes[1].layers[0].chrome = 'laptop';
+const badChromeResult = validateSpec(badChrome);
+assert(!badChromeResult.ok && badChromeResult.errors.some((error) => error.includes('chrome')), 'a bad chrome value should fail');
+
+const thinSplit = prepareSpec(goodSpec());
+thinSplit.scenes[0].layout = 'split';
+const thinSplitResult = validateSpec(thinSplit);
+assert(!thinSplitResult.ok && thinSplitResult.errors.some((error) => error.includes('split')), 'a split without two picture layers should fail');
+
+const paired = prepareSpec(goodSpec());
+paired.scenes[1].layout = 'split';
+paired.scenes[1].layers[0].chrome = 'phone';
+paired.scenes[1].layers.push({ type: 'image', src: 'other.jpg', x: 80, y: 80, w: 400 });
+const pairedResult = validateSpec(paired);
+assert(pairedResult.ok, `phone chrome and a two-picture split should pass: ${pairedResult.errors.join('; ')}`);
 
 assert(JSON.stringify(Object.keys(TONE_MUSIC).sort()) === JSON.stringify([...TONES].sort()), 'every tone needs a music preset');
 for (const preset of Object.values(TONE_MUSIC)) assert(DENSITIES.includes(preset.density), `unknown density ${preset.density}`);

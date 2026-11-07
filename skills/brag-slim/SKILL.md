@@ -76,6 +76,15 @@ Write `brag-plan.md` and `spec.json` in the output directory. The plan is the ar
 - An `endcard` layer in the final scene, with enough hold to read the line
 - `music.off: true` when the user passed `--no-music`. `sfx: false` when they passed `--no-sfx`. Leave bpm, density, and the wipe to the tone. `prepareSpec` fills them in
 
+Picture fields, when the cut needs them:
+
+- `freeze` on a clip holds one take frame. `speed` may be negative, which plays the take backward. `ramp` is `[[sceneTime, speed], ...]` and replaces `speed`: each speed holds until the next knot, integrated from `from`
+- `chrome: "phone"` or `"browser"` on a clip draws a bezel around the box. Phone is a rounded bezel. Browser is a thin top bar. The picture stays the screenshot
+- `layout: "split"` puts the first two `clip` or `image` layers in halves, left and right on landscape and square, top and bottom on vertical, with an 8px gap
+- `wipe` may be `push` (the scene enters from the left over 0.36s) or `iris` (a circle opens over 0.4s). The previous scene stays hidden
+- `punch: true` multiplies the scene scale by a short beat impulse, separate from the slow push
+- an image `cam` is `[[sceneTime, xFraction, yFraction, zoom], ...]`, fractions of the bitmap. With no `cam`, the image keeps its pop-in
+
 Text lines are `[text, accent?]` or a string. `accent: true` uses `pal.accent`.
 
 ## Creative laws

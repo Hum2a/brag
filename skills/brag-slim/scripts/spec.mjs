@@ -207,6 +207,44 @@ export function reflow(spec, format) {
   return next;
 }
 
+// Take time at a scene-local instant. A set freeze holds that frame (a number is the
+// frame; any other set value holds `from`). `ramp` is [[sceneTime, speed], ...], sorted
+// and scene-local: each speed holds until the next knot and replaces constant `speed`.
+// Integrate from `from` (default 0). Otherwise from + (sceneTime - at) * speed.
+// The result may fall outside the take. The page clamps it to the frame list.
+export function clipTime(layer, sceneTime) {
+  const from = layer.from ?? 0;
+  const at = layer.at ?? 0;
+  if (layer.freeze != null && layer.freeze !== false) {
+    return typeof layer.freeze === 'number' ? layer.freeze : from;
+  }
+  if (Array.isArray(layer.ramp) && layer.ramp.length) {
+    const knots = layer.ramp.map((knot) => [knot[0], knot[1]]).sort((a, b) => a[0] - b[0]);
+    const speedAt = (time) => {
+      let speed = knots[0][1];
+      for (const [knotTime, knotSpeed] of knots) {
+        if (knotTime <= time) speed = knotSpeed;
+        else break;
+      }
+      return speed;
+    };
+    const lo = Math.min(at, sceneTime);
+    const hi = Math.max(at, sceneTime);
+    const marks = [lo];
+    for (const [knotTime] of knots) {
+      if (knotTime > lo && knotTime < hi) marks.push(knotTime);
+    }
+    marks.push(hi);
+    let covered = 0;
+    for (let i = 0; i < marks.length - 1; i += 1) {
+      covered += speedAt(marks[i]) * (marks[i + 1] - marks[i]);
+    }
+    const direction = sceneTime >= at ? 1 : -1;
+    return from + direction * covered;
+  }
+  return from + (sceneTime - at) * (layer.speed ?? 1);
+}
+
 export function stillTimes(spec) {
   const times = [];
   for (const scene of spec.scenes ?? []) {
@@ -309,7 +347,12 @@ export function validateSpec(spec) {
 
     let hasPicture = false;
     scenes.forEach((scene, i) => {
+      if (scene.layout === 'split') {
+        const pictures = (scene.layers ?? []).filter((layer) => layer.type === 'clip' || layer.type === 'image');
+        if (pictures.length < 2) errors.push(`scene ${i + 1} split needs two picture layers`);
+      }
       for (const layer of scene.layers ?? []) {
+        if (layer.chrome != null && layer.chrome !== 'phone' && layer.chrome !== 'browser') errors.push(`scene ${i + 1} chrome must be phone or browser`);
         if (layer.type === 'text' && (!Array.isArray(layer.lines) || layer.lines.length === 0)) errors.push(`scene ${i + 1} text layer needs lines`);
         if (layer.type === 'clip' && !layer.take) errors.push(`scene ${i + 1} clip needs a take`);
         if (layer.type === 'clip' && layer.box !== 'full' && !Array.isArray(layer.box)) errors.push(`scene ${i + 1} clip needs a box`);
